@@ -9,9 +9,10 @@ RS_NS_START
 
 // Mode of speed/memory optimization for the arena
 // Will affect whether high memory consumption is used to slightly increase speed or not
+// NOTE: In GPU-ONLY builds, HEAVY mode is recommended for maximum GPU performance
 enum class ArenaMemWeightMode : byte {
-	HEAVY, // ~1,263KB per arena with 4 cars
-	LIGHT  // ~383KB per arena with 4 cars
+	HEAVY, // ~1,263KB per arena with 4 cars (GPU-optimized: RECOMMENDED)
+	LIGHT  // ~383KB per arena with 4 cars (Use if GPU memory limited)
 	// Measurements last updated 2024/5/9
 };
 

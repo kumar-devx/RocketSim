@@ -16,42 +16,12 @@
         "CMAKE_BUILD_TYPE": "Release",
         "ROCKETSIM_CUDA": "ON"
       }
-    },
-    {
-      "name": "cpu-release",
-      "displayName": "CPU-Only Release Build",
-      "description": "Build without CUDA (CPU fallback)",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "ROCKETSIM_CUDA": "OFF"
-      }
-    },
-    {
-      "name": "cpu-debug",
-      "displayName": "CPU-Only Debug Build",
-      "description": "Debug build without CUDA",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build-debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "ROCKETSIM_CUDA": "OFF"
-      }
     }
   ],
   "buildPresets": [
     {
       "name": "cuda-release",
       "configurePreset": "cuda-release"
-    },
-    {
-      "name": "cpu-release",
-      "configurePreset": "cpu-release"
-    },
-    {
-      "name": "cpu-debug",
-      "configurePreset": "cpu-debug"
     }
   ]
 }
