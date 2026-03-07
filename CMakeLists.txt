@@ -69,13 +69,3 @@ if(ROCKETSIM_CUDA)
         >
     )
 endif()
-
-# Build standalone CUDA test
-option(BUILD_CUDA_TEST "Build standalone CUDA test" ON)
-
-if(BUILD_CUDA_TEST AND ROCKETSIM_CUDA)
-    # Simple CUDA test (no RocketSim dependencies)
-    add_executable(SimpleCudaTest test/SimpleCudaTest.cpp)
-    target_link_libraries(SimpleCudaTest PRIVATE CUDA::cudart CUDA::cuda_driver)
-    set_target_properties(SimpleCudaTest PROPERTIES CXX_STANDARD 20)
-endif()

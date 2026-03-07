@@ -701,14 +701,16 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 
 void Arena::Step(int ticksToSimulate) {
 #ifdef RS_CUDA_ENABLED
-	// Use GPU path if CUDA is enabled
-	if (_useCuda) {
-		_StepGPU(ticksToSimulate);
-		return;
+	// GPU-ONLY MODE - No CPU fallback
+	if (!_useCuda) {
+		RS_ERR_CLOSE("Arena::Step() - GPU acceleration required but not available! "
+					 "CUDA must be initialized before creating arenas.");
 	}
-#endif
-	
-	// CPU fallback path (original implementation)
+
+	_StepGPU(ticksToSimulate);
+	return;
+#else
+	// CPU fallback path (only if CUDA not compiled)
 	for (int i = 0; i < ticksToSimulate; i++) {
 
 		_bulletWorld.setWorldUserInfo(this);
@@ -775,6 +777,7 @@ void Arena::Step(int ticksToSimulate) {
 
 		tickCount++;
 	}
+#endif // RS_CUDA_ENABLED
 }
 
 // Returns negative: within
@@ -1118,55 +1121,46 @@ void Arena::_SetupArenaCollisionShapes() {
 #error "RS_CUDA_ENABLED should be defined here but it's not!"
 #endif
 
-extern CudaEngine* GetCudaEngine(); // Defined in RocketSim.cpp
-
 void Arena::_InitCudaBuffers() {
-	auto* cudaEngine = GetCudaEngine();
-	if (!cudaEngine || !cudaEngine->IsEnabled()) {
-		_useCuda = false;
-		return;
+	auto* cudaEngine = RocketSim::GetCudaEngine();
+	if (!cudaEngine) {
+		RS_ERR_CLOSE("CUDA engine not initialized! Call RocketSim::InitCuda() before creating arenas.");
 	}
 
-	try {
-		// Allocate GPU memory for ball (unified memory for easy sync)
-		auto& memMgr = cudaEngine->GetMemoryManager();
-		_gpuBall = memMgr.AllocateUnified<GpuBallState>(1);
-
-		// Check if allocation succeeded
-		if (!_gpuBall) {
-			RS_LOG("Failed to allocate GPU memory for ball, falling back to CPU");
-			_useCuda = false;
-			return;
-		}
-
-		// Allocate GPU memory for cars (start with capacity for 8 cars)
-		_gpuCarsCapacity = 8;
-		_gpuCars = memMgr.AllocateUnified<GpuCarState>(_gpuCarsCapacity);
-
-		// Check if allocation succeeded
-		if (!_gpuCars) {
-			RS_LOG("Failed to allocate GPU memory for cars, falling back to CPU");
-			memMgr.Free(_gpuBall);
-			_gpuBall = nullptr;
-			_useCuda = false;
-			return;
-		}
-
-		_useCuda = true;
-
-		// Initial sync to GPU
-		_SyncStatesToGPU();
-	} catch (const std::exception& e) {
-		RS_LOG("CUDA buffer initialization failed: " << e.what() << ", falling back to CPU");
-		_CleanupCudaBuffers();
-		_useCuda = false;
+	if (!cudaEngine->IsEnabled()) {
+		RS_ERR_CLOSE("CUDA engine initialization failed! GPU is required for this build.");
 	}
+
+	// Allocate GPU memory for ball (unified memory for easy sync)
+	auto& memMgr = cudaEngine->GetMemoryManager();
+	_gpuBall = memMgr.AllocateUnified<GpuBallState>(1);
+
+	// Check if allocation succeeded
+	if (!_gpuBall) {
+		RS_ERR_CLOSE("Failed to allocate GPU memory for ball! GPU memory exhausted or driver issue.");
+	}
+
+	// Allocate GPU memory for cars (start with capacity for 8 cars)
+	_gpuCarsCapacity = 8;
+	_gpuCars = memMgr.AllocateUnified<GpuCarState>(_gpuCarsCapacity);
+
+	// Check if allocation succeeded
+	if (!_gpuCars) {
+		memMgr.Free(_gpuBall);
+		_gpuBall = nullptr;
+		RS_ERR_CLOSE("Failed to allocate GPU memory for cars! GPU memory exhausted or driver issue.");
+	}
+
+	_useCuda = true;
+
+	// Initial sync to GPU
+	_SyncStatesToGPU();
 }
 
 void Arena::_CleanupCudaBuffers() {
 	if (!_useCuda) return;
 
-	auto* cudaEngine = GetCudaEngine();
+	auto* cudaEngine = RocketSim::GetCudaEngine();
 	if (!cudaEngine) return;
 
 	auto& memMgr = cudaEngine->GetMemoryManager();
@@ -1206,9 +1200,9 @@ void Arena::_SyncStatesToGPU() {
 	for (Car* car : _cars) {
 		if (carIdx >= _gpuCarsCapacity) {
 			// Reallocate if we have more cars than capacity
-			auto* cudaEngine = GetCudaEngine();
+			auto* cudaEngine = RocketSim::GetCudaEngine();
 			auto& memMgr = cudaEngine->GetMemoryManager();
-			
+
 			memMgr.Free(_gpuCars);
 			_gpuCarsCapacity = _cars.size() * 2;
 			_gpuCars = memMgr.AllocateUnified<GpuCarState>(_gpuCarsCapacity);
@@ -1275,13 +1269,11 @@ void Arena::_SyncStatesFromGPU() {
 }
 
 void Arena::_StepGPU(int ticksToSimulate) {
-	auto* cudaEngine = GetCudaEngine();
+	auto* cudaEngine = RocketSim::GetCudaEngine();
 	if (!cudaEngine || !cudaEngine->IsEnabled()) {
-		// Fallback to CPU
-		_useCuda = false;
-		return;
+		RS_ERR_CLOSE("GPU acceleration required but CUDA engine not available!");
 	}
-	
+
 	for (int i = 0; i < ticksToSimulate; i++) {
 		// Sync CPU state to GPU
 		_SyncStatesToGPU();

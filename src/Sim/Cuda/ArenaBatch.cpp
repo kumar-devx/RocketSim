@@ -155,19 +155,15 @@ void ArenaBatch::SyncFromGPU() {
 void ArenaBatch::StepAll(int ticksToSimulate) {
     auto* cudaEngine = GetCudaEngine();
     if (!cudaEngine || !cudaEngine->IsEnabled()) {
-        // CPU fallback - step each arena sequentially
-        for (Arena* arena : arenas_) {
-            arena->Step(ticksToSimulate);
-        }
-        return;
+        RS_ERR_CLOSE("ArenaBatch requires GPU acceleration! CUDA must be enabled.");
     }
-    
+
     int numArenas = static_cast<int>(arenas_.size());
     if (numArenas == 0) return;
-    
+
     // Allocate GPU buffers if needed
     AllocateGPUBuffers();
-    
+
     for (int tick = 0; tick < ticksToSimulate; tick++) {
         // Sync all arenas to GPU
         SyncToGPU();

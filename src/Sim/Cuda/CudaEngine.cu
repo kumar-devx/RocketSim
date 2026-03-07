@@ -15,42 +15,44 @@ CudaEngine::~CudaEngine() {
 }
 
 bool CudaEngine::Initialize() {
-    try {
-        if (!CudaMemoryManager::IsCudaAvailable()) {
-            std::cerr << "CUDA not available, falling back to CPU mode" << std::endl;
-            enabled_ = false;
-            return false;
-        }
-
-        std::cout << "Initializing CUDA for RocketSim..." << std::endl;
-        CudaMemoryManager::PrintDeviceInfo();
-
-        // Create CUDA stream for async operations
-        if (!CUDA_TRY(cudaStreamCreate(&stream_))) {
-            std::cerr << "Failed to create CUDA stream, falling back to CPU" << std::endl;
-            enabled_ = false;
-            return false;
-        }
-
-        // Test GPU memory allocation
-        void* test_ptr = nullptr;
-        if (!CUDA_TRY(cudaMalloc(&test_ptr, 1024))) {
-            std::cerr << "Failed to allocate test memory, GPU not usable" << std::endl;
-            if (stream_) cudaStreamDestroy(stream_);
-            stream_ = 0;
-            enabled_ = false;
-            return false;
-        }
-        CUDA_TRY(cudaFree(test_ptr));
-
-        enabled_ = true;
-        std::cout << "CUDA initialized successfully!" << std::endl;
-        return true;
-    } catch (const std::exception& e) {
-        std::cerr << "CUDA initialization failed: " << e.what() << std::endl;
+    if (!CudaMemoryManager::IsCudaAvailable()) {
+        std::cerr << "FATAL: No CUDA devices found! GPU is required for this build." << std::endl;
+        std::cerr << "Make sure you have:" << std::endl;
+        std::cerr << "  1. Compatible NVIDIA GPU (RTX 2000+)" << std::endl;
+        std::cerr << "  2. Updated GPU drivers (545.x+ for CUDA 12.6)" << std::endl;
+        std::cerr << "  3. CUDA Toolkit 12.6 installed" << std::endl;
         enabled_ = false;
         return false;
     }
+
+    std::cout << "Initializing CUDA for RocketSim..." << std::endl;
+    CudaMemoryManager::PrintDeviceInfo();
+
+    // Create CUDA stream for async operations
+    cudaError_t err = cudaStreamCreate(&stream_);
+    if (err != cudaSuccess) {
+        std::cerr << "FATAL: Failed to create CUDA stream: " << cudaGetErrorString(err) << std::endl;
+        enabled_ = false;
+        return false;
+    }
+
+    // Test GPU memory allocation (MANDATORY)
+    void* test_ptr = nullptr;
+    err = cudaMalloc(&test_ptr, 1024 * 1024); // 1MB test
+    if (err != cudaSuccess) {
+        std::cerr << "FATAL: Failed to allocate GPU memory: " << cudaGetErrorString(err) << std::endl;
+        std::cerr << "GPU is present but cannot allocate memory!" << std::endl;
+        if (stream_) cudaStreamDestroy(stream_);
+        stream_ = 0;
+        enabled_ = false;
+        return false;
+    }
+    cudaFree(test_ptr);
+
+    enabled_ = true;
+    std::cout << "CUDA initialized successfully!" << std::endl;
+    std::cout << "GPU-ONLY MODE: CPU fallback disabled" << std::endl;
+    return true;
 }
 
 void CudaEngine::UpdateArena(

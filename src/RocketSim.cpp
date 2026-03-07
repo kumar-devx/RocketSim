@@ -182,10 +182,20 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 		stage = RocketSimStage::INITIALIZED;
 
 #ifdef RS_CUDA_ENABLED
-		// Try to initialize CUDA (non-blocking, falls back to CPU if unavailable)
+		// Initialize CUDA (MANDATORY in GPU-only mode)
 		if (!silent)
-			RS_LOG("Attempting to initialize CUDA acceleration...");
-		InitCuda();
+			RS_LOG("Initializing CUDA acceleration (REQUIRED)...");
+
+		if (!InitCuda()) {
+			RS_ERR_CLOSE("FATAL: CUDA initialization failed! GPU is required for this build.\n"
+						 "Make sure you have:\n"
+						 "  1. Compatible NVIDIA GPU (RTX 2000+)\n"
+						 "  2. Updated GPU drivers (545.x+ for CUDA 12.6)\n"
+						 "  3. GPU visible to the application");
+		}
+
+		if (!silent)
+			RS_LOG("CUDA initialization successful - GPU-ONLY MODE active");
 #endif
 	}
 	_beginInitMutex.unlock();
@@ -218,7 +228,7 @@ bool RocketSim::TestCudaSetup() {
 }
 
 // Internal accessor for Arena to use
-CudaEngine* GetCudaEngine() {
+CudaEngine* RocketSim::GetCudaEngine() {
 	return g_cudaEngine.get();
 }
 #endif

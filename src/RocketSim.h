@@ -48,5 +48,9 @@ namespace RocketSim {
 	bool InitCuda();
 	bool IsCudaEnabled();
 	bool TestCudaSetup();
+
+	// Internal CUDA engine accessor (for use by Arena)
+	class CudaEngine;
+	CudaEngine* GetCudaEngine();
 #endif
 }
