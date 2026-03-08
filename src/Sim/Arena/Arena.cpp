@@ -600,6 +600,8 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 
 	Arena* newArena = new Arena(gameMode, newConfig, 1.f / tickTime);
 	newArena->tickCount = tickCount;
+	// Reserve temporary IDs above serialized IDs so per-car insertion order cannot collide.
+	newArena->_lastCarID = RS_MAX(newArena->_lastCarID, lastCarID);
 	
 	{ // Deserialize cars
 		uint32_t carAmount = in.Read<uint32_t>();
@@ -671,7 +673,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		Car* newCar = newArena->AddCar(car->team, car->config);
 		
 		newCar->SetState(car->GetState());
+
+		// Remap from temporary AddCar ID to source ID while keeping map consistency.
+		uint32_t tempID = newCar->id;
+		newArena->_carIDMap.erase(tempID);
+#ifndef RS_MAX_SPEED
+		if (newArena->_carIDMap.count(car->id)) {
+			RS_ERR_CLOSE("Arena::Clone(): duplicate car ID during clone remap: " << car->id);
+		}
+#endif
+		newArena->_carIDMap[car->id] = newCar;
 		newCar->id = car->id;
+
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
 	}
@@ -691,7 +704,9 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 	car->_Deserialize(in);
 	car->team = team;
 
-	_AddCarFromPtr(car);
+	if (!_AddCarFromPtr(car)) {
+		RS_ERR_CLOSE("Arena::DeserializeNewCar(): Failed to insert car while deserializing");
+	}
 
 	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
 	car->SetState(car->_internalState);

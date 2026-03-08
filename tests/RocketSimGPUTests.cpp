@@ -587,6 +587,30 @@ void TestCloneIsolationAfterMutation() {
 	delete arena;
 }
 
+void TestCloneGetCarLookupIntegrityMultiCar() {
+	using namespace RocketSim;
+	Arena* arena = MakeVoidArena();
+	std::vector<uint32_t> ids;
+
+	for (int i = 0; i < 6; i++) {
+		Car* car = arena->AddCar((i % 2 == 0) ? Team::BLUE : Team::ORANGE);
+		AssertTrue(car != nullptr, "Failed to add car for clone lookup integrity test");
+		ids.push_back(car->id);
+	}
+
+	Arena* clone = arena->Clone(false);
+	AssertTrue(clone->GetCars().size() == ids.size(), "Clone should preserve all cars");
+
+	for (uint32_t id : ids) {
+		Car* cloned = clone->GetCar(id);
+		AssertTrue(cloned != nullptr, "Clone GetCar(id) should find every original ID");
+		AssertTrue(cloned->id == id, "Clone car ID should match lookup ID");
+	}
+
+	delete clone;
+	delete arena;
+}
+
 void TestDeserializeCorruptedDataThrows() {
 	using namespace RocketSim;
 	Arena* arena = MakeVoidArena();
@@ -848,6 +872,7 @@ int main() {
 		{"MutatorConfigSetGet", TestMutatorConfigSetGet},
 		{"ClonePreservesCoreState", TestClonePreservesCoreState},
 		{"CloneIsolationAfterMutation", TestCloneIsolationAfterMutation},
+		{"CloneGetCarLookupIntegrityMultiCar", TestCloneGetCarLookupIntegrityMultiCar},
 		{"SerializeDeserializeRoundtrip", TestSerializeDeserializeRoundtrip},
 		{"DeserializeCorruptedDataThrows", TestDeserializeCorruptedDataThrows},
 		{"VoidScoringQueriesAreFalse", TestVoidScoringQueriesAreFalse},
