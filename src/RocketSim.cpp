@@ -223,8 +223,8 @@ bool RocketSim::IsCudaEnabled() {
 }
 
 bool RocketSim::TestCudaSetup() {
-	extern bool TestCudaSetup(); // Defined in CudaTest.cu
-	return TestCudaSetup();
+	extern bool RunCudaSelfTest(); // Defined in CudaTest.cu
+	return RunCudaSelfTest();
 }
 
 // Internal accessor for Arena to use

@@ -1117,10 +1117,6 @@ void Arena::_SetupArenaCollisionShapes() {
 #ifdef RS_CUDA_ENABLED
 // GPU acceleration implementation
 
-#ifndef RS_CUDA_ENABLED
-#error "RS_CUDA_ENABLED should be defined here but it's not!"
-#endif
-
 void Arena::_InitCudaBuffers() {
 	auto* cudaEngine = RocketSim::GetCudaEngine();
 	if (!cudaEngine) {
@@ -1163,6 +1159,9 @@ void Arena::_CleanupCudaBuffers() {
 	auto* cudaEngine = RocketSim::GetCudaEngine();
 	if (!cudaEngine) return;
 
+	// CRITICAL: Synchronize GPU to ensure no operations are using this memory
+	cudaEngine->Synchronize();
+
 	auto& memMgr = cudaEngine->GetMemoryManager();
 
 	if (_gpuBall) {
@@ -1174,7 +1173,7 @@ void Arena::_CleanupCudaBuffers() {
 		memMgr.Free(_gpuCars);
 		_gpuCars = nullptr;
 	}
-	
+
 	_useCuda = false;
 }
 
@@ -1201,11 +1200,21 @@ void Arena::_SyncStatesToGPU() {
 		if (carIdx >= _gpuCarsCapacity) {
 			// Reallocate if we have more cars than capacity
 			auto* cudaEngine = RocketSim::GetCudaEngine();
+
+			// CRITICAL: Synchronize before freeing to avoid in-page errors
+			cudaEngine->Synchronize();
+
 			auto& memMgr = cudaEngine->GetMemoryManager();
 
 			memMgr.Free(_gpuCars);
+			_gpuCars = nullptr;
 			_gpuCarsCapacity = _cars.size() * 2;
 			_gpuCars = memMgr.AllocateUnified<GpuCarState>(_gpuCarsCapacity);
+			
+			// CRITICAL: Check if reallocation succeeded
+			if (!_gpuCars) {
+				RS_ERR_CLOSE("Failed to reallocate GPU memory for cars! GPU memory exhausted.");
+			}
 		}
 		
 		CarState carState = car->GetState();
@@ -1251,6 +1260,11 @@ void Arena::_SyncStatesFromGPU() {
 	// Sync car states back
 	int carIdx = 0;
 	for (Car* car : _cars) {
+		// Safety check: ensure we don't go out of bounds
+		if (carIdx >= _gpuCarsCapacity) {
+			RS_ERR_CLOSE("GPU car capacity mismatch in _SyncStatesFromGPU! This should never happen.");
+		}
+		
 		const GpuCarState& gpuCar = _gpuCars[carIdx];
 		
 		CarState carState = car->GetState();
@@ -1281,8 +1295,20 @@ void Arena::_StepGPU(int ticksToSimulate) {
 		// Launch GPU kernels
 		int numCars = static_cast<int>(_cars.size());
 		cudaEngine->UpdateArena(_gpuBall, _gpuCars, numCars, tickTime);
+
+		// Launch GPU car-to-car collision kernel (Phase 2-3 optimization)
+		// This replaces Bullet3's car-to-car collision processing on GPU
+		// Directly applies impulses to car velocities without CPU callback overhead
+		if (numCars > 1) {
+			LaunchCarToCarCollisionFull(
+				_gpuCars,
+				numCars,
+				_mutatorConfig.carMass,
+				0  // Use default stream
+			);
+		}
 		
-		// Wait for GPU to finish
+		// Wait for GPU to finish (both physics and collision kernels)
 		cudaEngine->Synchronize();
 		
 		// Sync GPU state back to CPU

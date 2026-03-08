@@ -66,18 +66,26 @@ CUDA_KERNEL void BallVelocityLimitKernel(GpuBallState* balls, int numBalls) {
 
 // Host-callable launcher functions
 void LaunchBallPhysicsKernel(GpuBallState* balls, int numBalls, float deltaTime, cudaStream_t stream) {
+    if (!balls || numBalls <= 0) return;
+    
     const int threadsPerBlock = 256;
     const int numBlocks = (numBalls + threadsPerBlock - 1) / threadsPerBlock;
     
     BallIntegrationKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(balls, numBalls, deltaTime);
+    CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
+    
     BallVelocityLimitKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(balls, numBalls);
+    CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
 }
 
 void LaunchBallIntegrationKernel(GpuBallState* balls, int numBalls, float deltaTime, cudaStream_t stream) {
+    if (!balls || numBalls <= 0) return;
+    
     const int threadsPerBlock = 256;
     const int numBlocks = (numBalls + threadsPerBlock - 1) / threadsPerBlock;
     
     BallIntegrationKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(balls, numBalls, deltaTime);
+    CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
 }
 
 RS_NS_END

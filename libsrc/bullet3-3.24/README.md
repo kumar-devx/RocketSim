@@ -70,59 +70,11 @@ You can download and install Bullet using the [vcpkg](https://github.com/Microso
 
 The Bullet port in vcpkg is kept up to date by Microsoft team members and community contributors. If the version is out of date, please [create an issue or pull request](https://github.com/Microsoft/vcpkg) on the vcpkg repository.
 
-## Build instructions for Bullet using premake. You can also use cmake instead.
+## Note: Build Configuration
 
-**Windows**
+RocketSim uses **CMake** for building (not the legacy Bullet3 premake system). See the RocketSim/RocketSim-GPU project root CMakeLists.txt for build instructions.
 
-Click on build_visual_studio_vr_pybullet_double.bat and open build3/vs2010/0_Bullet3Solution.sln
-When asked, convert the projects to a newer version of Visual Studio.
-If you installed Python in the C:\ root directory, the batch file should find it automatically.
-Otherwise, edit this batch file to choose where Python include/lib directories are located.
-
-**Windows Virtual Reality sandbox for HTC Vive and Oculus Rift**
-
-Build and run the App_SharedMemoryPhysics_VR project, preferably in Release/optimized build.
-You can connect from Python pybullet to the sandbox using:
-
-```
-import pybullet as p
-p.connect(p.SHARED_MEMORY) #or (p.TCP, "localhost", 6667) or (p.UDP, "192.168.86.10",1234)
-```
-
-**Linux and Mac OSX gnu make**
-
-Make sure cmake is installed (sudo apt-get install cmake, brew install cmake, or https://cmake.org)
-
-In a terminal type:
-```
-./build_cmake_pybullet_double.sh
-```
-This script will invoke cmake and build in the build_cmake directory. You can find pybullet in Bullet/examples/pybullet.
-The BulletExampleBrowser binary will be in Bullet/examples/ExampleBrowser.
-
-You can also build Bullet using premake. There are premake executables in the build3 folder.
-Depending on your system (Linux 32bit, 64bit or Mac OSX) use one of the following lines
-Using premake:
-```
-cd build3
-./premake4_linux --double gmake
-./premake4_linux64 --double gmake
-./premake4_osx --double --enable_pybullet gmake
-```
-Then
-```
-cd gmake
-make
-```
-
-Note that on Linux, you need to use cmake to build pybullet, since the compiler has issues of mixing shared and static libraries.
-
-**Mac OSX Xcode**
-	
-Click on build3/xcode4.command or in a terminal window execute
-```	
-./premake_osx xcode4
-```
+Bullet3 source code is included here for physics simulation. The old build3/ and premake-based build system is no longer used.
 ## Usage
 
 The App_ExampleBrowser executables will be located in the bin folder.

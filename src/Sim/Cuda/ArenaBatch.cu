@@ -107,12 +107,15 @@ void LaunchBatchArenaPhysicsKernel(
     int numArenas,
     float deltaTime
 ) {
+    if (!balls || !cars || !carOffsets || numArenas <= 0) return;
+    
     const int threadsPerBlock = 256;
     const int numBlocks = (numArenas + threadsPerBlock - 1) / threadsPerBlock;
 
     BatchArenaPhysicsKernel<<<numBlocks, threadsPerBlock>>>(
         balls, cars, carOffsets, numArenas, deltaTime
     );
+    CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
 }
 
 RS_NS_END

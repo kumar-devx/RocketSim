@@ -13,8 +13,8 @@ CUDA_KERNEL void TestKernel(float* output, int n) {
     }
 }
 
-// Test function to verify CUDA is working
-bool TestCudaSetup() {
+// Internal test function to verify CUDA is working
+bool RunCudaSelfTest() {
     std::cout << "\n=== Testing CUDA Setup ===" << std::endl;
     
     if (!CudaMemoryManager::IsCudaAvailable()) {

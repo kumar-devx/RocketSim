@@ -2,6 +2,9 @@
 
 project("RocketSim" LANGUAGES CXX)
 
+include(CTest)
+option(ROCKETSIM_BUILD_TESTS "Build RocketSim test suite" ON)
+
 # Option to enable CUDA acceleration
 option(ROCKETSIM_CUDA "Enable CUDA GPU acceleration" ON)
 
@@ -68,4 +71,14 @@ if(ROCKETSIM_CUDA)
             -allow-unsupported-compiler
         >
     )
+endif()
+
+if(BUILD_TESTING AND ROCKETSIM_BUILD_TESTS)
+    add_executable(RocketSimGPUTests
+        ${PROJECT_SOURCE_DIR}/tests/RocketSimGPUTests.cpp
+    )
+    target_include_directories(RocketSimGPUTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(RocketSimGPUTests PRIVATE RocketSim)
+    set_target_properties(RocketSimGPUTests PROPERTIES CXX_STANDARD 20)
+    add_test(NAME RocketSim.GPU.All COMMAND RocketSimGPUTests)
 endif()

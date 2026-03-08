@@ -36,6 +36,15 @@ public:
             CUDA_CHECK(cudaFree(ptr));
         }
     }
+
+    // Free memory and nullify pointer (safer)
+    template<typename T>
+    void Free(T*& ptr) {
+        if (ptr) {
+            CUDA_CHECK(cudaFree(ptr));
+            ptr = nullptr;
+        }
+    }
     
     // Copy data to device
     template<typename T>
@@ -92,6 +101,7 @@ public:
     ~GpuBuffer() {
         if (ptr_) {
             cudaFree(ptr_);
+            ptr_ = nullptr;
         }
     }
 
@@ -109,7 +119,10 @@ public:
 
     GpuBuffer& operator=(GpuBuffer&& other) noexcept {
         if (this != &other) {
-            if (ptr_) cudaFree(ptr_);
+            if (ptr_) {
+                cudaFree(ptr_);
+                ptr_ = nullptr;
+            }
             ptr_ = other.ptr_;
             size_ = other.size_;
             valid_ = other.valid_;

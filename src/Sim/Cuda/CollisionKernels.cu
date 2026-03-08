@@ -5,6 +5,13 @@
 
 RS_NS_START
 
+// Atomic vector add helper functions for race-condition-free collision response
+CUDA_DEVICE inline void AtomicAddVec3(GpuVec3* dst, const GpuVec3& delta) {
+    atomicAdd(&dst->x, delta.x);
+    atomicAdd(&dst->y, delta.y);
+    atomicAdd(&dst->z, delta.z);
+}
+
 // Simple ball-floor collision (for testing/fallback)
 CUDA_KERNEL void BallFloorCollisionKernel(GpuBallState* balls, int numBalls) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -66,6 +73,8 @@ CUDA_DEVICE bool SphereBoxCollision(
 }
 
 // Ball-car collision kernel
+// WARNING: Multiple threads (cars) may collide with the same ball simultaneously
+// Uses atomic operations to prevent race conditions
 CUDA_KERNEL void BallCarCollisionKernel(
     GpuBallState* balls,
     GpuCarState* cars,
@@ -90,9 +99,11 @@ CUDA_KERNEL void BallCarCollisionKernel(
         car.pos, car.hitboxSize, car.rotMat,
         contactNormal, penetration
     )) {
-        // Simple collision response
-        // Separate objects
-        ball.pos = ball.pos + contactNormal * penetration;
+        // CRITICAL FIX: Use atomic operations to prevent race conditions
+        // Multiple cars can collide with the ball simultaneously
+        
+        // Calculate position correction
+        GpuVec3 posCorrection = contactNormal * penetration;
         
         // Apply impulse (simplified)
         GpuVec3 relVel = ball.vel - car.vel;
@@ -104,8 +115,15 @@ CUDA_KERNEL void BallCarCollisionKernel(
             j /= (1.0f / ball.mass + 1.0f / car.mass);
             
             GpuVec3 impulse = contactNormal * j;
-            ball.vel = ball.vel + impulse * (1.0f / ball.mass);
-            car.vel = car.vel - impulse * (1.0f / car.mass);
+            GpuVec3 ballVelDelta = impulse * (1.0f / ball.mass);
+            GpuVec3 carVelDelta = impulse * (1.0f / car.mass);
+            
+            // ATOMIC UPDATES: Safe for concurrent modifications
+            AtomicAddVec3(&ball.pos, posCorrection);
+            AtomicAddVec3(&ball.vel, ballVelDelta);
+            
+            // Car velocity update (no atomics needed - one thread per car)
+            car.vel = car.vel - carVelDelta;
         }
     }
 }
@@ -143,10 +161,13 @@ CUDA_KERNEL void CarGroundDetectionKernel(GpuCarState* cars, int numCars) {
 
 // Host launchers
 void LaunchBallFloorCollisionKernel(GpuBallState* balls, int numBalls, cudaStream_t stream) {
+    if (!balls || numBalls <= 0) return;
+    
     const int threadsPerBlock = 256;
     const int numBlocks = (numBalls + threadsPerBlock - 1) / threadsPerBlock;
     
     BallFloorCollisionKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(balls, numBalls);
+    CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
 }
 
 void LaunchBallCarCollisionKernel(
@@ -156,18 +177,33 @@ void LaunchBallCarCollisionKernel(
     int numCars,
     cudaStream_t stream
 ) {
+    if (!balls || !cars || numBalls <= 0 || numCars <= 0) return;
+    
+    // Limit threads per block to avoid exceeding hardware limits
+    int threadsPerBlock = numCars;
+    if (threadsPerBlock > 1024) {
+        // CUDA hardware limit is typically 1024 threads per block
+        // If more cars, we need to restructure the kernel (future work)
+        threadsPerBlock = 1024;
+        fprintf(stderr, "WARNING: Too many cars (%d) for BallCarCollisionKernel! Max 1024 supported. Some collisions may be missed.\n", numCars);
+    }
+    
     // Launch with one block per ball, threads per car
     dim3 blocks(numBalls, 1, 1);
-    dim3 threads(numCars, 1, 1);
+    dim3 threads(threadsPerBlock, 1, 1);
     
-    BallCarCollisionKernel<<<blocks, threads, 0, stream>>>(balls, cars, numBalls, numCars);
+    BallCarCollisionKernel<<<blocks, threads, 0, stream>>>(balls, cars, numBalls, threadsPerBlock);
+    CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
 }
 
 void LaunchCarGroundDetectionKernel(GpuCarState* cars, int numCars, cudaStream_t stream) {
+    if (!cars || numCars <= 0) return;
+    
     const int threadsPerBlock = 256;
     const int numBlocks = (numCars + threadsPerBlock - 1) / threadsPerBlock;
     
     CarGroundDetectionKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(cars, numCars);
+    CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
 }
 
 RS_NS_END

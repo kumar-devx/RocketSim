@@ -11,6 +11,7 @@ CudaEngine::CudaEngine() : enabled_(false), stream_(0) {
 CudaEngine::~CudaEngine() {
     if (stream_) {
         cudaStreamDestroy(stream_);
+        stream_ = nullptr;
     }
 }
 
@@ -42,12 +43,17 @@ bool CudaEngine::Initialize() {
     if (err != cudaSuccess) {
         std::cerr << "FATAL: Failed to allocate GPU memory: " << cudaGetErrorString(err) << std::endl;
         std::cerr << "GPU is present but cannot allocate memory!" << std::endl;
-        if (stream_) cudaStreamDestroy(stream_);
-        stream_ = 0;
+        if (stream_) {
+            cudaStreamDestroy(stream_);
+            stream_ = nullptr;
+        }
         enabled_ = false;
         return false;
     }
-    cudaFree(test_ptr);
+    if (test_ptr) {
+        cudaFree(test_ptr);
+        test_ptr = nullptr;
+    }
 
     enabled_ = true;
     std::cout << "CUDA initialized successfully!" << std::endl;
