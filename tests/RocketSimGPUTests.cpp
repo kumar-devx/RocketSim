@@ -622,6 +622,15 @@ void TestHighCarCountStressNoNaNs() {
 		auto team = (i % 2 == 0) ? Team::BLUE : Team::ORANGE;
 		Car* car = arena->AddCar(team);
 		AssertTrue(car != nullptr, "Failed to add stress-test car");
+
+		CarState cs = car->GetState();
+		// Spread cars out to avoid pathological deep-overlap impulses while still stress-testing.
+		int col = i % 8;
+		int row = i / 8;
+		cs.pos = Vec(-2800.0f + col * 800.0f, -1800.0f + row * 1200.0f, 1200.0f);
+		cs.vel = Vec((i % 3 - 1) * 150.0f, ((i + 1) % 3 - 1) * 150.0f, 0.0f);
+		cs.isOnGround = false;
+		car->SetState(cs);
 	}
 
 	arena->Step(60);

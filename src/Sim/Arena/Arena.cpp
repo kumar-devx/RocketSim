@@ -1219,6 +1219,7 @@ void Arena::_SyncStatesToGPU() {
 		
 		CarState carState = car->GetState();
 		GpuCarState& gpuCar = _gpuCars[carIdx];
+		gpuCar = {};
 		
 		gpuCar.pos = ToGpuVec3(carState.pos);
 		gpuCar.vel = ToGpuVec3(carState.vel);
@@ -1238,8 +1239,23 @@ void Arena::_SyncStatesToGPU() {
 		// State
 		gpuCar.isOnGround = carState.isOnGround;
 		gpuCar.isDemoed = carState.isDemoed;
+		gpuCar.hasJumped = carState.hasJumped;
+		gpuCar.hasDoubleJumped = carState.hasDoubleJumped;
+		gpuCar.hasFlipped = carState.hasFlipped;
+		gpuCar.isJumping = carState.isJumping;
+		gpuCar.isFlipping = carState.isFlipping;
+		gpuCar.isBoosting = carState.isBoosting;
+		gpuCar.jumpTime = carState.jumpTime;
+		gpuCar.flipTime = carState.flipTime;
+		gpuCar.airTimeSinceJump = carState.airTimeSinceJump;
+		gpuCar.boostingTime = carState.boostingTime;
+		gpuCar.handbrakeVal = carState.handbrakeVal;
+		gpuCar.flipRelTorque = ToGpuVec3(carState.flipRelTorque);
 		gpuCar.boost_amount = carState.boost;
 		gpuCar.mass = _mutatorConfig.carMass;
+		gpuCar.hitboxSize = ToGpuVec3(car->config.hitboxSize);
+		gpuCar.hitboxPosOffset = ToGpuVec3(car->config.hitboxPosOffset);
+		gpuCar.numWheels = car->_bulletVehicle.getNumWheels();
 		gpuCar.tickCount = tickCount;
 		
 		carIdx++;
@@ -1248,8 +1264,21 @@ void Arena::_SyncStatesToGPU() {
 
 void Arena::_SyncStatesFromGPU() {
 	if (!_useCuda || !_gpuBall || !_gpuCars) return;
+
+	auto isFiniteGpuVec = [](const GpuVec3& v) {
+		return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+	};
+
+	auto isReasonableGpuVec = [&](const GpuVec3& v) {
+		constexpr float MAX_ABS = 1e7f;
+		return isFiniteGpuVec(v) && (fabsf(v.x) < MAX_ABS) && (fabsf(v.y) < MAX_ABS) && (fabsf(v.z) < MAX_ABS);
+	};
 	
 	// Sync ball state back
+	if (!isReasonableGpuVec(_gpuBall->pos) || !isReasonableGpuVec(_gpuBall->vel) || !isReasonableGpuVec(_gpuBall->angVel)) {
+		RS_ERR_CLOSE("GPU produced invalid ball state (non-finite or out-of-range values)");
+	}
+
 	BallState ballState;
 	ballState.pos = FromGpuVec3(_gpuBall->pos);
 	ballState.vel = FromGpuVec3(_gpuBall->vel);
@@ -1266,6 +1295,10 @@ void Arena::_SyncStatesFromGPU() {
 		}
 		
 		const GpuCarState& gpuCar = _gpuCars[carIdx];
+
+		if (!isReasonableGpuVec(gpuCar.pos) || !isReasonableGpuVec(gpuCar.vel) || !isReasonableGpuVec(gpuCar.angVel)) {
+			RS_ERR_CLOSE("GPU produced invalid car state (non-finite or out-of-range values) for car id " << car->id);
+		}
 		
 		CarState carState = car->GetState();
 		carState.pos = FromGpuVec3(gpuCar.pos);
