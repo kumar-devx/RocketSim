@@ -208,14 +208,15 @@ void RocketSim::AssertInitialized(const char* errorMsgPrefix) {
 }
 
 #ifdef RS_CUDA_ENABLED
-// Global CUDA engine instance
-static std::unique_ptr<CudaEngine> g_cudaEngine = nullptr;
+// Global CUDA engine instance.
+// Intentionally process-lifetime to avoid CUDA teardown order issues at exit.
+static CudaEngine* g_cudaEngine = nullptr;
 
 bool RocketSim::InitCuda() {
 	if (!g_cudaEngine) {
-		g_cudaEngine = std::make_unique<CudaEngine>();
+		g_cudaEngine = new CudaEngine();
 	}
-	return g_cudaEngine->Initialize();
+	return g_cudaEngine && g_cudaEngine->Initialize();
 }
 
 bool RocketSim::IsCudaEnabled() {
@@ -229,6 +230,6 @@ bool RocketSim::TestCudaSetup() {
 
 // Internal accessor for Arena to use
 CudaEngine* RocketSim::GetCudaEngine() {
-	return g_cudaEngine.get();
+	return g_cudaEngine;
 }
 #endif

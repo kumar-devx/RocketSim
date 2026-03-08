@@ -666,6 +666,8 @@ int main() {
 
 	for (const auto& [name, fn] : tests) {
 		try {
+			std::cout << "[RUN] " << name << '\n';
+			std::cout.flush();
 			fn();
 			passed++;
 			std::cout << "[PASS] " << name << '\n';

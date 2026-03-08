@@ -5,11 +5,9 @@
 #include "../Ball/Ball.h"
 #include "../Car/Car.h"
 #include "CudaEngine.h"
+#include "../../RocketSim.h"
 
 RS_NS_START
-
-// External declarations
-extern CudaEngine* GetCudaEngine();
 
 // Declare the kernel (defined in ArenaBatch.cu)
 extern void LaunchBatchArenaPhysicsKernel(
@@ -153,7 +151,7 @@ void ArenaBatch::SyncFromGPU() {
 }
 
 void ArenaBatch::StepAll(int ticksToSimulate) {
-    auto* cudaEngine = GetCudaEngine();
+    auto* cudaEngine = RocketSim::GetCudaEngine();
     if (!cudaEngine || !cudaEngine->IsEnabled()) {
         RS_ERR_CLOSE("ArenaBatch requires GPU acceleration! CUDA must be enabled.");
     }
