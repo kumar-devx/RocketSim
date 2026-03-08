@@ -1304,7 +1304,7 @@ void Arena::_StepGPU(int ticksToSimulate) {
 				_gpuCars,
 				numCars,
 				_mutatorConfig.carMass,
-				0  // Use default stream
+				cudaEngine->GetStream()
 			);
 		}
 		

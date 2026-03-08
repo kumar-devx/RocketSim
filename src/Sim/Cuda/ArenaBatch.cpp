@@ -15,7 +15,8 @@ extern void LaunchBatchArenaPhysicsKernel(
     GpuCarState* cars,
     int* carOffsets,
     int numArenas,
-    float deltaTime
+    float deltaTime,
+    cudaStream_t stream
 );
 
 ArenaBatch::ArenaBatch() 
@@ -173,7 +174,8 @@ void ArenaBatch::StepAll(int ticksToSimulate) {
             gpuCars_.get(),
             carOffsets_.get(),
             numArenas,
-            deltaTime
+            deltaTime,
+            cudaEngine->GetStream()
         );
         
         // Wait for GPU

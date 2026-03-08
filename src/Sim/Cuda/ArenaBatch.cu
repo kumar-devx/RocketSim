@@ -105,14 +105,15 @@ void LaunchBatchArenaPhysicsKernel(
     GpuCarState* cars,
     int* carOffsets,
     int numArenas,
-    float deltaTime
+    float deltaTime,
+    cudaStream_t stream
 ) {
     if (!balls || !cars || !carOffsets || numArenas <= 0) return;
     
     const int threadsPerBlock = 256;
     const int numBlocks = (numArenas + threadsPerBlock - 1) / threadsPerBlock;
 
-    BatchArenaPhysicsKernel<<<numBlocks, threadsPerBlock>>>(
+    BatchArenaPhysicsKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
         balls, cars, carOffsets, numArenas, deltaTime
     );
     CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors

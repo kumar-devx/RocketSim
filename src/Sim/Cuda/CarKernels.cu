@@ -26,6 +26,12 @@ CUDA_DEVICE inline GpuVec3 Cross(const GpuVec3& a, const GpuVec3& b) {
     };
 }
 
+CUDA_DEVICE inline void AtomicAddVec3(GpuVec3* dst, const GpuVec3& delta) {
+    atomicAdd(&dst->x, delta.x);
+    atomicAdd(&dst->y, delta.y);
+    atomicAdd(&dst->z, delta.z);
+}
+
 // GPU kernel for boost mechanics
 CUDA_DEVICE void UpdateBoost(GpuCarState& car, float dt) {
     using namespace GpuRLConst;
@@ -326,9 +332,11 @@ CUDA_KERNEL void CarToCarCollisionFullKernel(
         // This eliminates need for CPU-side callback processing
         GpuVec3 impulse = contactNormal * impulseMagnitude;
         
-        // Update velocities (thread-safe atomic operations)
-        car1.vel = car1.vel + impulse * (1.0f / carMass);
-        car2.vel = car2.vel - impulse * (1.0f / carMass);
+        // Update velocities atomically because multiple threads may touch car2.
+        GpuVec3 car1Delta = impulse * (1.0f / carMass);
+        GpuVec3 car2Delta = impulse * (-1.0f / carMass);
+        AtomicAddVec3(&car1.vel, car1Delta);
+        AtomicAddVec3(&car2.vel, car2Delta);
     }
 }
 

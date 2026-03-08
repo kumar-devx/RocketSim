@@ -41,6 +41,9 @@ public:
     
     // Synchronize GPU (wait for all operations to complete)
     void Synchronize();
+
+    // Accessor for internal stream so all kernel launches share one sync domain.
+    cudaStream_t GetStream() const { return stream_; }
     
     // Get memory manager
     CudaMemoryManager& GetMemoryManager() { return memoryManager_; }
