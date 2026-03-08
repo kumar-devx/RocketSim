@@ -1339,6 +1339,9 @@ void Arena::_StepGPU(int ticksToSimulate) {
 				_mutatorConfig.carMass,
 				cudaEngine->GetStream()
 			);
+
+			// Collision impulses can exceed sane speeds; clamp before feeding state back into Bullet.
+			LaunchCarVelocityLimitKernel(_gpuCars, numCars, cudaEngine->GetStream());
 		}
 		
 		// Wait for GPU to finish (both physics and collision kernels)

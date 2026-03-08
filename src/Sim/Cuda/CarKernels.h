@@ -23,6 +23,9 @@ void LaunchCarToCarCollisionFull(
     cudaStream_t stream = 0
 );
 
+// Clamp/sanitize velocities without integrating physics (useful after collision kernels).
+void LaunchCarVelocityLimitKernel(GpuCarState* cars, int numCars, cudaStream_t stream = 0);
+
 RS_NS_END
 
 #endif // RS_CUDA_ENABLED

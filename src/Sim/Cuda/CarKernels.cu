@@ -222,6 +222,14 @@ CUDA_KERNEL void CarVelocityLimitKernel(GpuCarState* cars, int numCars) {
     GpuCarState& car = cars[idx];
     
     if (car.isDemoed) return;
+
+    // Defensive sanitization to prevent invalid values from propagating into Bullet.
+    if (!isfinite(car.vel.x) || !isfinite(car.vel.y) || !isfinite(car.vel.z)) {
+        car.vel = {0.0f, 0.0f, 0.0f};
+    }
+    if (!isfinite(car.angVel.x) || !isfinite(car.angVel.y) || !isfinite(car.angVel.z)) {
+        car.angVel = {0.0f, 0.0f, 0.0f};
+    }
     
     // Limit linear velocity
     float velLengthSq = car.vel.lengthSq();
@@ -273,6 +281,16 @@ void LaunchCarIntegrationKernel(GpuCarState* cars, int numCars, float deltaTime,
     
     CarPhysicsFullKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(cars, numCars, deltaTime, nullptr);
     CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
+}
+
+void LaunchCarVelocityLimitKernel(GpuCarState* cars, int numCars, cudaStream_t stream) {
+    if (!cars || numCars <= 0) return;
+
+    const int threadsPerBlock = 256;
+    const int numBlocks = (numCars + threadsPerBlock - 1) / threadsPerBlock;
+
+    CarVelocityLimitKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(cars, numCars);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 // GPU Car-to-Car Collision Detection & Physics (Phase 2-3 Optimization)
