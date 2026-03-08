@@ -20,14 +20,41 @@ bool CudaEngine::Initialize() {
         std::cerr << "FATAL: No CUDA devices found! GPU is required for this build." << std::endl;
         std::cerr << "Make sure you have:" << std::endl;
         std::cerr << "  1. Compatible NVIDIA GPU (RTX 2000+)" << std::endl;
-        std::cerr << "  2. Updated GPU drivers (545.x+ for CUDA 12.6)" << std::endl;
-        std::cerr << "  3. CUDA Toolkit 12.6 installed" << std::endl;
+        std::cerr << "  2. Updated NVIDIA driver" << std::endl;
+        std::cerr << "  3. Matching CUDA toolkit/runtime for your GPU architecture" << std::endl;
         enabled_ = false;
         return false;
     }
 
     std::cout << "Initializing CUDA for RocketSim..." << std::endl;
     CudaMemoryManager::PrintDeviceInfo();
+
+    int activeDevice = 0;
+    CUDA_CHECK(cudaGetDevice(&activeDevice));
+
+    cudaDeviceProp prop;
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, activeDevice));
+
+    int runtimeVersion = 0;
+    int driverVersion = 0;
+    CUDA_CHECK(cudaRuntimeGetVersion(&runtimeVersion));
+    CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
+
+    // Compute capability 12.x GPUs (e.g., RTX 50-series) require CUDA 12.8+ for kernel support.
+    if (prop.major >= 12 && runtimeVersion < 12080) {
+        std::cerr << "FATAL: GPU " << prop.name << " reports compute capability "
+                  << prop.major << "." << prop.minor << ", but CUDA runtime is too old (" 
+                  << runtimeVersion << ")." << std::endl;
+        std::cerr << "Rebuild with CUDA 12.8+ and sm_120 target support." << std::endl;
+        enabled_ = false;
+        return false;
+    }
+
+    if (runtimeVersion > driverVersion) {
+        std::cerr << "WARNING: CUDA runtime version (" << runtimeVersion
+                  << ") exceeds driver supported version (" << driverVersion << ")." << std::endl;
+        std::cerr << "Kernel launches may fail until the NVIDIA driver is updated." << std::endl;
+    }
 
     // Create CUDA stream for async operations
     cudaError_t err = cudaStreamCreate(&stream_);

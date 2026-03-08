@@ -19,7 +19,10 @@ file(GLOB_RECURSE FILES_ROCKETSIM CONFIGURE_DEPENDS
 )
 
 file(GLOB_RECURSE FILES_CUDA CONFIGURE_DEPENDS 
-    "${PROJECT_SOURCE_DIR}/src/Sim/Cuda/*.cu" 
+    "${PROJECT_SOURCE_DIR}/src/Sim/Cuda/*.cu"
+)
+
+file(GLOB_RECURSE FILES_CUDA_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/Sim/Cuda/*.cuh"
 )
 
@@ -29,7 +32,7 @@ file(GLOB_RECURSE FILES_BULLET CONFIGURE_DEPENDS
 )
 
 # Main library
-add_library(RocketSim ${FILES_ROCKETSIM} ${FILES_BULLET} ${FILES_CUDA})
+add_library(RocketSim ${FILES_ROCKETSIM} ${FILES_BULLET} ${FILES_CUDA} ${FILES_CUDA_HEADERS})
 
 # Set C++ standard
 set_target_properties(RocketSim PROPERTIES 

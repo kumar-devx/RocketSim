@@ -20,8 +20,9 @@ CudaMemoryManager::CudaMemoryManager() {
 }
 
 CudaMemoryManager::~CudaMemoryManager() {
-    // Cleanup is handled by RAII wrappers
-    cudaDeviceReset();
+    // Do not call cudaDeviceReset() here.
+    // Resetting the process-wide CUDA device during object teardown can race
+    // with other static/global destructors and cause exit-time crashes.
 }
 
 bool CudaMemoryManager::IsCudaAvailable() {
@@ -33,9 +34,22 @@ bool CudaMemoryManager::IsCudaAvailable() {
 void CudaMemoryManager::PrintDeviceInfo() {
     int deviceCount = 0;
     CUDA_CHECK(cudaGetDeviceCount(&deviceCount));
+
+    int runtimeVersion = 0;
+    int driverVersion = 0;
+    cudaRuntimeGetVersion(&runtimeVersion);
+    cudaDriverGetVersion(&driverVersion);
+
+    auto printCudaVersion = [](const char* label, int version) {
+        int major = version / 1000;
+        int minor = (version % 1000) / 10;
+        std::cout << "  " << label << ": " << major << "." << minor << " (" << version << ")" << std::endl;
+    };
     
     std::cout << "=== CUDA Device Information ===" << std::endl;
     std::cout << "Number of CUDA devices: " << deviceCount << std::endl;
+    printCudaVersion("CUDA Runtime Version", runtimeVersion);
+    printCudaVersion("CUDA Driver Version", driverVersion);
     
     for (int i = 0; i < deviceCount; i++) {
         cudaDeviceProp prop;
