@@ -61,7 +61,10 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
 	car->config = config;
 	car->team = team;
 	
-	_AddCarFromPtr(car);
+	if (!_AddCarFromPtr(car)) {
+		delete car;
+		RS_ERR_CLOSE("Arena::AddCar(): failed to insert new car (ID collision)");
+	}
 
 	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
 	car->Respawn(gameMode, -1, _mutatorConfig.carSpawnBoostAmount);
@@ -102,7 +105,8 @@ bool Arena::RemoveCar(uint32_t id) {
 }
 
 Car* Arena::GetCar(uint32_t id) {
-	return _carIDMap[id];
+	auto it = _carIDMap.find(id);
+	return (it != _carIDMap.end()) ? it->second : nullptr;
 }
 
 void Arena::SetGoalScoreCallback(GoalScoreEventFn callbackFunc, void* userInfo) {
@@ -660,6 +664,8 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 
 Arena* Arena::Clone(bool copyCallbacks) {
 	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
+	// Reserve temporary IDs above source IDs to avoid collisions while remapping.
+	newArena->_lastCarID = this->_lastCarID;
 	
 	if (copyCallbacks) {
 		newArena->_goalScoreCallback = this->_goalScoreCallback;
