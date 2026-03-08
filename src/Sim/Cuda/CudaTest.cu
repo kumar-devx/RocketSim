@@ -29,6 +29,7 @@ bool RunCudaSelfTest() {
     int threadsPerBlock = 256;
     int numBlocks = (N + threadsPerBlock - 1) / threadsPerBlock;
     TestKernel<<<numBlocks, threadsPerBlock>>>(gpuData.get(), N);
+    CUDA_CHECK(cudaGetLastError());
     
     CUDA_CHECK(cudaDeviceSynchronize());
     
