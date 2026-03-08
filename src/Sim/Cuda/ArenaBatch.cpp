@@ -15,6 +15,7 @@ extern void LaunchBatchArenaPhysicsKernel(
     GpuCarState* cars,
     int* carOffsets,
     int numArenas,
+    int totalCars,
     float deltaTime,
     cudaStream_t stream
 );
@@ -164,6 +165,11 @@ void ArenaBatch::StepAll(int ticksToSimulate) {
     AllocateGPUBuffers();
 
     for (int tick = 0; tick < ticksToSimulate; tick++) {
+        int totalCars = 0;
+        for (Arena* arena : arenas_) {
+            totalCars += static_cast<int>(arena->GetCars().size());
+        }
+
         // Sync all arenas to GPU
         SyncToGPU();
         
@@ -174,6 +180,7 @@ void ArenaBatch::StepAll(int ticksToSimulate) {
             gpuCars_.get(),
             carOffsets_.get(),
             numArenas,
+            totalCars,
             deltaTime,
             cudaEngine->GetStream()
         );

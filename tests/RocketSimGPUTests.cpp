@@ -43,6 +43,18 @@ void AssertVecNear(const RocketSim::Vec& a, const RocketSim::Vec& b, float eps, 
 	}
 }
 
+template <typename Fn>
+void AssertThrows(Fn&& fn, const std::string& msg, const std::string& contains = "") {
+	try {
+		fn();
+		Fail(msg + " | expected exception");
+	} catch (const std::exception& e) {
+		if (!contains.empty() && std::string(e.what()).find(contains) == std::string::npos) {
+			Fail(msg + " | unexpected exception message: " + std::string(e.what()));
+		}
+	}
+}
+
 bool IsFiniteVec(const RocketSim::Vec& v) {
 	return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
@@ -202,6 +214,16 @@ void TestVoidArenaCreationBasics() {
 	delete arena;
 }
 
+void TestReinitIdempotentNoThrow() {
+	using namespace RocketSim;
+	EnsureInitialized();
+	InitFromMem({}, true);
+	AssertTrue(GetStage() == RocketSimStage::INITIALIZED, "Stage should remain INITIALIZED after repeated InitFromMem");
+#ifdef RS_CUDA_ENABLED
+	AssertTrue(RocketSim::IsCudaEnabled(), "CUDA should remain enabled after repeated InitFromMem");
+#endif
+}
+
 void TestAddGetRemoveCarLifecycle() {
 	using namespace RocketSim;
 	Arena* arena = MakeVoidArena();
@@ -221,6 +243,16 @@ void TestRemoveCarByPointer() {
 	Car* car = arena->AddCar(Team::ORANGE);
 	AssertTrue(arena->RemoveCar(car), "RemoveCar by pointer should succeed");
 	AssertTrue(arena->GetCars().empty(), "Arena should have no cars");
+	delete arena;
+}
+
+void TestRemoveMissingCarReturnsFalse() {
+	using namespace RocketSim;
+	Arena* arena = MakeVoidArena();
+	Car* car = arena->AddCar(Team::BLUE);
+	AssertTrue(car != nullptr, "AddCar returned null");
+	AssertTrue(!arena->RemoveCar(9999999), "RemoveCar should return false for missing id");
+	AssertTrue(arena->GetCars().size() == 1, "Removing missing car should not change arena cars");
 	delete arena;
 }
 
@@ -414,6 +446,33 @@ void TestVoidScoringQueriesAreFalse() {
 	delete arena;
 }
 
+void TestGoalScoreCallbackThrowsInVoid() {
+	using namespace RocketSim;
+	Arena* arena = MakeVoidArena();
+	AssertThrows(
+		[&]() {
+			arena->SetGoalScoreCallback([](Arena*, Team, void*) {}, nullptr);
+		},
+		"SetGoalScoreCallback should throw in THE_VOID",
+		"THE_VOID"
+	);
+	delete arena;
+}
+
+void TestIsBallProbablyGoingInThrowsInVoid() {
+	using namespace RocketSim;
+	Arena* arena = MakeVoidArena();
+	Team teamOut = Team::BLUE;
+	AssertThrows(
+		[&]() {
+			(void)arena->IsBallProbablyGoingIn(2.0f, 0.0f, &teamOut);
+		},
+		"IsBallProbablyGoingIn should throw in THE_VOID",
+		"not supported"
+	);
+	delete arena;
+}
+
 void TestSoccarScoringQueriesWhenMeshesAvailable() {
 	using namespace RocketSim;
 	if (!HasArenaMeshes(GameMode::SOCCAR)) {
@@ -476,6 +535,105 @@ void TestDemolishAndRespawnCallPath() {
 	CarState s = car->GetState();
 	AssertTrue(!s.isDemoed, "Car should not remain demoed after Respawn");
 	AssertNear(s.boost, 33.0f, 0.1f, "Respawn boost amount mismatch");
+	delete arena;
+}
+
+void TestStepZeroAndNegativeNoTickAdvance() {
+	using namespace RocketSim;
+	Arena* arena = MakeVoidArena();
+	const uint64_t startTick = arena->tickCount;
+	BallState startBall = arena->ball->GetState();
+
+	arena->Step(0);
+	AssertTrue(arena->tickCount == startTick, "Step(0) should not advance tick count");
+
+	arena->Step(-4);
+	AssertTrue(arena->tickCount == startTick, "Step(negative) should not advance tick count");
+
+	BallState out = arena->ball->GetState();
+	AssertVecNear(out.pos, startBall.pos, 0.001f, "Ball position should remain unchanged when no ticks are simulated");
+	delete arena;
+}
+
+void TestCloneIsolationAfterMutation() {
+	using namespace RocketSim;
+	Arena* arena = MakeVoidArena();
+	Car* car = arena->AddCar(Team::BLUE);
+
+	BallState ballState = arena->ball->GetState();
+	ballState.pos = Vec(100, 200, 300);
+	arena->ball->SetState(ballState);
+
+	CarState carState = car->GetState();
+	carState.pos = Vec(-400, 800, 1200);
+	car->SetState(carState);
+
+	Arena* clone = arena->Clone(false);
+	Car* clonedCar = clone->GetCar(car->id);
+	AssertTrue(clonedCar != nullptr, "Cloned arena should contain cloned car");
+
+	BallState cloneBall = clone->ball->GetState();
+	cloneBall.pos = Vec(999, 999, 999);
+	clone->ball->SetState(cloneBall);
+
+	CarState cloneCarState = clonedCar->GetState();
+	cloneCarState.pos = Vec(777, -777, 777);
+	clonedCar->SetState(cloneCarState);
+
+	AssertVecNear(arena->ball->GetState().pos, ballState.pos, 0.001f, "Original ball state should not change when clone mutates");
+	AssertVecNear(car->GetState().pos, carState.pos, 0.001f, "Original car state should not change when clone mutates");
+
+	delete clone;
+	delete arena;
+}
+
+void TestDeserializeCorruptedDataThrows() {
+	using namespace RocketSim;
+	Arena* arena = MakeVoidArena();
+	arena->AddCar(Team::BLUE);
+	arena->Step(2);
+
+	DataStreamOut out;
+	arena->Serialize(out);
+	AssertTrue(!out.data.empty(), "Serialized data must not be empty");
+
+	std::vector<byte> truncated = out.data;
+	truncated.resize(truncated.size() / 2);
+
+	DataStreamIn in;
+	in.data = truncated;
+
+	AssertThrows(
+		[&]() {
+			Arena* restored = Arena::DeserializeNew(in);
+			delete restored;
+		},
+		"Deserialize should throw on truncated/corrupted data"
+	);
+
+	delete arena;
+}
+
+void TestHighCarCountStressNoNaNs() {
+	using namespace RocketSim;
+	Arena* arena = MakeVoidArena();
+	constexpr int kCarCount = 32;
+	for (int i = 0; i < kCarCount; i++) {
+		auto team = (i % 2 == 0) ? Team::BLUE : Team::ORANGE;
+		Car* car = arena->AddCar(team);
+		AssertTrue(car != nullptr, "Failed to add stress-test car");
+	}
+
+	arena->Step(60);
+	AssertTrue(arena->GetCars().size() == kCarCount, "Car count changed unexpectedly after stress step");
+
+	BallState b = arena->ball->GetState();
+	AssertTrue(IsFiniteVec(b.pos) && IsFiniteVec(b.vel) && IsFiniteVec(b.angVel), "Ball state contains non-finite values after stress step");
+	for (Car* car : arena->GetCars()) {
+		CarState c = car->GetState();
+		AssertTrue(IsFiniteVec(c.pos) && IsFiniteVec(c.vel) && IsFiniteVec(c.angVel), "Car state contains non-finite values after stress step");
+	}
+
 	delete arena;
 }
 
@@ -602,6 +760,40 @@ void TestArenaBatchLifecycle() {
 #endif
 }
 
+void TestArenaBatchStepAllMixedCarCounts() {
+#ifdef RS_CUDA_ENABLED
+	using namespace RocketSim;
+	EnsureInitialized();
+
+	Arena* a1 = MakeVoidArena();
+	Arena* a2 = MakeVoidArena();
+	a1->AddCar(Team::BLUE);
+	a1->AddCar(Team::ORANGE);
+
+	ArenaBatch batch;
+	batch.AddArena(a1);
+	batch.AddArena(a2); // Keep zero-car arena last to exercise edge bounds
+
+	uint64_t start1 = a1->tickCount;
+	uint64_t start2 = a2->tickCount;
+
+	batch.StepAll(3);
+
+	AssertTrue(a1->tickCount == start1 + 3, "ArenaBatch should advance populated arena tick count");
+	AssertTrue(a2->tickCount == start2 + 3, "ArenaBatch should advance empty arena tick count");
+
+	BallState b1 = a1->ball->GetState();
+	BallState b2 = a2->ball->GetState();
+	AssertTrue(IsFiniteVec(b1.pos) && IsFiniteVec(b1.vel), "ArenaBatch populated arena ball state should remain finite");
+	AssertTrue(IsFiniteVec(b2.pos) && IsFiniteVec(b2.vel), "ArenaBatch empty arena ball state should remain finite");
+
+	delete a1;
+	delete a2;
+#else
+	throw SkipTest("RS_CUDA_ENABLED is not defined in this build");
+#endif
+}
+
 void TestArenaBatchStepAllOptional() {
 #ifdef RS_CUDA_ENABLED
 	const char* runBatchStep = std::getenv("ROCKETSIM_RUN_BATCH_STEP_TEST");
@@ -633,9 +825,11 @@ int main() {
 		{"InitAndStage", TestInitAndStage},
 		{"CudaEnabledAfterInit", TestCudaEnabledAfterInit},
 		{"CudaSetupSelfTest", TestCudaSetupSelfTest},
+		{"ReinitIdempotentNoThrow", TestReinitIdempotentNoThrow},
 		{"VoidArenaCreationBasics", TestVoidArenaCreationBasics},
 		{"AddGetRemoveCarLifecycle", TestAddGetRemoveCarLifecycle},
 		{"RemoveCarByPointer", TestRemoveCarByPointer},
+		{"RemoveMissingCarReturnsFalse", TestRemoveMissingCarReturnsFalse},
 		{"AddMultipleCarsUniqueIds", TestAddMultipleCarsUniqueIds},
 		{"BallStateSetGetRoundtrip", TestBallStateSetGetRoundtrip},
 		{"CarStateSetGetRoundtrip", TestCarStateSetGetRoundtrip},
@@ -644,12 +838,18 @@ int main() {
 		{"GravityAffectsBallVelocity", TestGravityAffectsBallVelocity},
 		{"MutatorConfigSetGet", TestMutatorConfigSetGet},
 		{"ClonePreservesCoreState", TestClonePreservesCoreState},
+		{"CloneIsolationAfterMutation", TestCloneIsolationAfterMutation},
 		{"SerializeDeserializeRoundtrip", TestSerializeDeserializeRoundtrip},
+		{"DeserializeCorruptedDataThrows", TestDeserializeCorruptedDataThrows},
 		{"VoidScoringQueriesAreFalse", TestVoidScoringQueriesAreFalse},
+		{"GoalScoreCallbackThrowsInVoid", TestGoalScoreCallbackThrowsInVoid},
+		{"IsBallProbablyGoingInThrowsInVoid", TestIsBallProbablyGoingInThrowsInVoid},
 		{"CarStateHelpers", TestCarStateHelpers},
 		{"BallStateMatchesMargins", TestBallStateMatchesMargins},
 		{"DemolishAndRespawnCallPath", TestDemolishAndRespawnCallPath},
+		{"StepZeroAndNegativeNoTickAdvance", TestStepZeroAndNegativeNoTickAdvance},
 		{"StepStabilityNoNaNs", TestStepStabilityNoNaNs},
+		{"HighCarCountStressNoNaNs", TestHighCarCountStressNoNaNs},
 		{"SetCarBumpCallbackNoCrash", TestSetCarBumpCallbackNoCrash},
 		{"SoccarScoringQueriesWhenMeshesAvailable", TestSoccarScoringQueriesWhenMeshesAvailable},
 		{"SoccarArenaCreationWhenMeshesAvailable", TestSoccarArenaCreationWhenMeshesAvailable},
@@ -657,6 +857,7 @@ int main() {
 		{"DropshotTileStateSetGetWhenMeshesAvailable", TestDropshotTileStateSetGetWhenMeshesAvailable},
 		{"DeterministicScenarioRepeatability", TestDeterministicScenarioRepeatability},
 		{"ArenaBatchLifecycle", TestArenaBatchLifecycle},
+		{"ArenaBatchStepAllMixedCarCounts", TestArenaBatchStepAllMixedCarCounts},
 		{"ArenaBatchStepAllOptional", TestArenaBatchStepAllOptional},
 	};
 

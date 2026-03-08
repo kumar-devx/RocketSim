@@ -12,6 +12,7 @@ CUDA_KERNEL void BatchArenaPhysicsKernel(
     GpuCarState* cars,
     int* carOffsets,
     int numArenas,
+    int totalCars,
     float deltaTime
 ) {
     int arenaIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -57,7 +58,7 @@ CUDA_KERNEL void BatchArenaPhysicsKernel(
 
     // Update cars for this arena
     int carStart = carOffsets[arenaIdx];
-    int carEnd = (arenaIdx < numArenas - 1) ? carOffsets[arenaIdx + 1] : carStart + 1;
+    int carEnd = (arenaIdx < numArenas - 1) ? carOffsets[arenaIdx + 1] : totalCars;
 
     for (int carIdx = carStart; carIdx < carEnd; carIdx++) {
         GpuCarState& car = cars[carIdx];
@@ -105,6 +106,7 @@ void LaunchBatchArenaPhysicsKernel(
     GpuCarState* cars,
     int* carOffsets,
     int numArenas,
+    int totalCars,
     float deltaTime,
     cudaStream_t stream
 ) {
@@ -114,7 +116,7 @@ void LaunchBatchArenaPhysicsKernel(
     const int numBlocks = (numArenas + threadsPerBlock - 1) / threadsPerBlock;
 
     BatchArenaPhysicsKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
-        balls, cars, carOffsets, numArenas, deltaTime
+        balls, cars, carOffsets, numArenas, totalCars, deltaTime
     );
     CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
 }
