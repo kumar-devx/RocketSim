@@ -318,13 +318,13 @@ CUDA_KERNEL void CarToCarCollisionFullKernel(
         // Calculate impulse (equal mass assumption for speed)
         // Using restitution to match Bullet3 behavior
         const float RESTITUTION = 0.4f;
-        float j = -(1.0f + RESTITUTION) * velAlongNormal / 2.0f;
+        float impulseMagnitude = -(1.0f + RESTITUTION) * velAlongNormal / 2.0f;
         
-        if (j < 0.1f) continue; // Ignore very small collisions
+        if (impulseMagnitude < 0.1f) continue; // Ignore very small collisions
         
         // Apply impulse directly to car velocities (GPU-side)
         // This eliminates need for CPU-side callback processing
-        GpuVec3 impulse = contactNormal * j;
+        GpuVec3 impulse = contactNormal * impulseMagnitude;
         
         // Update velocities (thread-safe atomic operations)
         car1.vel = car1.vel + impulse * (1.0f / carMass);
