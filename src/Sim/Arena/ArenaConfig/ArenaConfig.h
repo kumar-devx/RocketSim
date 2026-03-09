@@ -16,7 +16,7 @@ enum class ArenaMemWeightMode : byte {
 	// Measurements last updated 2024/5/9
 };
 
-struct ArenaConfig {
+struct RS_API ArenaConfig {
 
 	ArenaMemWeightMode memWeightMode = ArenaMemWeightMode::HEAVY;
 

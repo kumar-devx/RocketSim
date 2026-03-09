@@ -4,7 +4,7 @@
 RS_NS_START
 
 // Stores all control inputs to a car
-struct CarControls {
+struct RS_API CarControls {
 	// Driving control
 	float throttle, steer;
 

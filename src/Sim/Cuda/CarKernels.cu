@@ -254,9 +254,16 @@ CUDA_KERNEL void CarVelocityLimitKernel(GpuCarState* cars, int numCars) {
     }
 }
 
-// Legacy integration kernel (kept for compatibility)
-CUDA_KERNEL void CarIntegrationKernel(GpuCarState* cars, int numCars, float dt) {
-    CarPhysicsFullKernel<<<1, 1>>>(cars + (blockIdx.x * blockDim.x + threadIdx.x), 1, dt, nullptr);
+// Legacy integration helper (kept for compatibility)
+// Host-side wrapper to avoid device-side kernel launches.
+static CUDA_HOST void CarIntegrationKernel(GpuCarState* cars, int numCars, float dt, cudaStream_t stream) {
+    if (!cars || numCars <= 0) return;
+
+    const int threadsPerBlock = 256;
+    const int numBlocks = (numCars + threadsPerBlock - 1) / threadsPerBlock;
+
+    CarPhysicsFullKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(cars, numCars, dt, nullptr);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 // Host-callable launcher functions
@@ -274,13 +281,7 @@ void LaunchCarPhysicsKernel(GpuCarState* cars, int numCars, float deltaTime, cud
 }
 
 void LaunchCarIntegrationKernel(GpuCarState* cars, int numCars, float deltaTime, cudaStream_t stream) {
-    if (!cars || numCars <= 0) return;
-    
-    const int threadsPerBlock = 256;
-    const int numBlocks = (numCars + threadsPerBlock - 1) / threadsPerBlock;
-    
-    CarPhysicsFullKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(cars, numCars, deltaTime, nullptr);
-    CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
+    CarIntegrationKernel(cars, numCars, deltaTime, stream);
 }
 
 void LaunchCarVelocityLimitKernel(GpuCarState* cars, int numCars, cudaStream_t stream) {

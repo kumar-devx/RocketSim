@@ -10,7 +10,7 @@
 
 RS_NS_START
 
-struct BoostPadConfig {
+struct RS_API BoostPadConfig {
 	Vec pos;
 	bool isBig = false;
 
@@ -20,7 +20,7 @@ struct BoostPadConfig {
 #define BOOSTPADCONFIG_SERIALIZATION_FIELDS \
 pos, isBig
 
-struct BoostPadState {
+struct RS_API BoostPadState {
 	bool isActive = true;
 	float cooldown = 0;
 
@@ -33,7 +33,7 @@ struct BoostPadState {
 #define BOOSTPAD_SERIALIZATION_FIELDS \
 isActive, cooldown, prevLockedCarID
 
-class BoostPad {
+class RS_API BoostPad {
 public:
 	BoostPadConfig config;
 

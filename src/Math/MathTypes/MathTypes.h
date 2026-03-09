@@ -4,7 +4,7 @@
 RS_NS_START
 
 // RocketSim 3D vector struct
-struct RS_ALIGN_16 Vec {
+struct RS_ALIGN_16 RS_API Vec {
 	float x, y, z;
 
 	float _w; // 4th component to get compiler to use SIMD operations
@@ -171,7 +171,7 @@ static_assert(sizeof(Vec) == sizeof(btVector3), "RocketSim Vec size must match b
 
 // RocketSim 3x3 rotation matrix struct
 // NOTE: Column-major
-struct RS_ALIGN_16 RotMat {
+struct RS_ALIGN_16 RS_API RotMat {
 	Vec forward, right, up;
 
 	RotMat() {
@@ -294,7 +294,7 @@ struct RS_ALIGN_16 RotMat {
 
 // RocketSim euler angle struct
 // Has the same order of application as Rotators in Rocket League (YPR), values are in radians
-struct Angle {
+struct RS_API Angle {
 	float yaw, pitch, roll;
 
 	Angle(float yaw = 0, float pitch = 0, float roll = 0) : yaw(yaw), pitch(pitch), roll(roll) {}

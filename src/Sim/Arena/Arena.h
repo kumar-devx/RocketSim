@@ -32,7 +32,7 @@ typedef std::function<void(class Arena* arena, Car* bumper, Car* victim, bool is
 
 // The container for all game simulation
 // Stores cars, the ball, all arena collisions, and manages the overall game state
-class Arena {
+class RS_API Arena {
 public:
 
 	GameMode gameMode;

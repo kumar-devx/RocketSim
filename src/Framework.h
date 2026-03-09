@@ -73,6 +73,17 @@ typedef uint8_t byte;
 
 #define RS_ALIGN_16 alignas(16)
 
+// DLL export/import macro
+#ifdef _WIN32
+	#ifdef RocketSim_EXPORTS
+		#define RS_API __declspec(dllexport)
+	#else
+		#define RS_API __declspec(dllimport)
+	#endif
+#else
+	#define RS_API
+#endif
+
 #ifndef RS_NO_NAMESPACE
 #define RS_NS_START namespace RocketSim {
 #define RS_NS_END }

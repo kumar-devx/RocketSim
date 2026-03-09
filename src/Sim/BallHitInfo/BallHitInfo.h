@@ -6,7 +6,7 @@
 
 RS_NS_START
 
-struct BallHitInfo {
+struct RS_API BallHitInfo {
 	// If false, all other fields within this struct should not be trusted
 	bool isValid = false;
 

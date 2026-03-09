@@ -3,7 +3,7 @@
 
 RS_NS_START
 
-struct WheelPairConfig {
+struct RS_API WheelPairConfig {
 	// Radius of both wheels
 	float wheelRadius;
 
@@ -18,7 +18,7 @@ struct WheelPairConfig {
 #define WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name) \
 name.connectionPointOffset, name.suspensionRestLength, name.wheelRadius
 
-struct CarConfig {
+struct RS_API CarConfig {
 	// Full size of hitbox (NOT the half-size/extent)
 	Vec hitboxSize;
 
@@ -44,7 +44,7 @@ WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.backWheels) \
 
 // Global car configurations for all car type presets
 // NOTE: CAR_CONFIG_PLANK is the batmobile preset
-const extern CarConfig
+extern RS_API const CarConfig
 	CAR_CONFIG_OCTANE, CAR_CONFIG_DOMINUS, CAR_CONFIG_PLANK, CAR_CONFIG_BREAKOUT, CAR_CONFIG_HYBRID, CAR_CONFIG_MERC, CAR_CONFIG_PSYCLOPS;
 
 RS_NS_END
