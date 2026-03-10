@@ -631,7 +631,8 @@ Arena::~Arena() {
 // GPU acceleration implementation
 
 void Arena::_InitCudaBuffers() {
-	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+	// Constructor only - no lock needed (unique ownership during init)
+	if (!_useCuda) return;
 
 	auto* cudaEngine = RocketSim::GetCudaEngine();
 	if (!cudaEngine) {
@@ -642,23 +643,19 @@ void Arena::_InitCudaBuffers() {
 		RS_ERR_CLOSE("CUDA engine initialization failed! GPU is required for this build.");
 	}
 
-	// Allocate GPU memory for ball (unified memory for easy sync)
-	auto& memMgr = cudaEngine->GetMemoryManager();
-	_gpuBall = memMgr.AllocateUnified<GpuBallState>(1);
-
-	// Check if allocation succeeded
+	// Use thread-safe allocations (handles context binding and mutual exclusion)
+	_gpuBall = cudaEngine->AllocateDeviceSafe<GpuBallState>(1);
 	if (!_gpuBall) {
 		RS_ERR_CLOSE("Failed to allocate GPU memory for ball! GPU memory exhausted or driver issue.");
 	}
 
 	// Allocate GPU memory for cars (start with capacity for 8 cars)
 	_gpuCarsCapacity = 8;
-	_gpuCars = memMgr.AllocateUnified<GpuCarState>(_gpuCarsCapacity);
+	_gpuCars = cudaEngine->AllocateDeviceSafe<GpuCarState>(_gpuCarsCapacity);
 
 	// Check if allocation succeeded
 	if (!_gpuCars) {
-		memMgr.Free(_gpuBall);
-		_gpuBall = nullptr;
+		cudaEngine->FreeDeviceSafe<GpuBallState>(_gpuBall);
 		RS_ERR_CLOSE("Failed to allocate GPU memory for cars! GPU memory exhausted or driver issue.");
 	}
 
@@ -729,26 +726,29 @@ void Arena::_InitCudaBuffers() {
 }
 
 void Arena::_CleanupCudaBuffers() {
-	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
-
+	// Note: Called from destructor which already holds _arenaMutex
+	// Do NOT acquire the lock again (recursive_mutex would waste resources)
+	
 	if (!_useCuda) return;
 
 	auto* cudaEngine = RocketSim::GetCudaEngine();
-	if (!cudaEngine) return;
+	if (!cudaEngine || !cudaEngine->IsEnabled()) {
+		// Engine no longer available, but buffers were allocated - try to notify
+		RS_WARN("CUDA engine not available during cleanup, GPU memory may leak!");
+		return;
+	}
 
-	// CRITICAL: Synchronize GPU to ensure no operations are using this memory
+	// Synchronize GPU to ensure no operations are using this memory
 	cudaEngine->Synchronize();
 
-	auto& memMgr = cudaEngine->GetMemoryManager();
-
+	// Free GPU buffers using thread-safe methods (which also handle context binding)
 	if (_gpuBall) {
-		memMgr.Free(_gpuBall);
-		_gpuBall = nullptr;
+		cudaEngine->FreeDeviceSafe<GpuBallState>(_gpuBall);
 	}
 
 	if (_gpuCars) {
-		memMgr.Free(_gpuCars);
-		_gpuCars = nullptr;
+		cudaEngine->FreeDeviceSafe<GpuCarState>(_gpuCars);
+		_gpuCarsCapacity = 0;
 	}
 
 	// Phase 2: Clean up GPU mesh collision data
@@ -769,16 +769,22 @@ void Arena::_SyncStatesToGPU() {
 		RS_ERR_CLOSE("CUDA engine not available during _SyncStatesToGPU()");
 	}
 
+	cudaEngine->MakeContextCurrent();
+	(void)cudaGetLastError();
+	cudaStream_t stream = cudaEngine->GetStream();
+
 	const int numCars = static_cast<int>(_cars.size());
 	if (numCars > _gpuCarsCapacity) {
 		// Ensure no in-flight kernels are accessing the old car buffer before reallocation.
 		cudaEngine->Synchronize();
 
-		auto& memMgr = cudaEngine->GetMemoryManager();
-		memMgr.Free(_gpuCars);
+		// Free old buffer using thread-safe method
+		cudaEngine->FreeDeviceSafe<GpuCarState>(_gpuCars);
 		_gpuCars = nullptr;
+
+		// Allocate new buffer with expanded capacity using thread-safe method
 		_gpuCarsCapacity = RS_MAX(numCars * 2, 8);
-		_gpuCars = memMgr.AllocateUnified<GpuCarState>(_gpuCarsCapacity);
+		_gpuCars = cudaEngine->AllocateDeviceSafe<GpuCarState>(_gpuCarsCapacity);
 
 		if (!_gpuCars) {
 			RS_ERR_CLOSE("Failed to reallocate GPU memory for cars! GPU memory exhausted.");
@@ -812,7 +818,7 @@ void Arena::_SyncStatesToGPU() {
 	gpuBall.dsInfo.hasDamaged = ballState.dsInfo.hasDamaged;
 	gpuBall.dsInfo.lastDamageTick = ballState.dsInfo.lastDamageTick;
 
-	CUDA_CHECK(cudaMemcpy(_gpuBall, &gpuBall, sizeof(GpuBallState), cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpyAsync(_gpuBall, &gpuBall, sizeof(GpuBallState), cudaMemcpyHostToDevice, stream));
 	
 	// Sync car states
 	std::vector<GpuCarState> gpuCarsHost;
@@ -908,11 +914,12 @@ void Arena::_SyncStatesToGPU() {
 	}
 
 	if (numCars > 0) {
-		CUDA_CHECK(cudaMemcpy(
+		CUDA_CHECK(cudaMemcpyAsync(
 			_gpuCars,
 			gpuCarsHost.data(),
 			size_t(numCars) * sizeof(GpuCarState),
-			cudaMemcpyHostToDevice
+			cudaMemcpyHostToDevice,
+			stream
 		));
 	}
 }
@@ -920,23 +927,34 @@ void Arena::_SyncStatesToGPU() {
 void Arena::_SyncStatesFromGPU() {
 	if (!_useCuda || !_gpuBall || !_gpuCars) return;
 
+	auto* cudaEngine = RocketSim::GetCudaEngine();
+	if (!cudaEngine || !cudaEngine->IsEnabled()) {
+		RS_ERR_CLOSE("CUDA engine not available during _SyncStatesFromGPU()");
+	}
+
+	cudaEngine->MakeContextCurrent();
+	cudaStream_t stream = cudaEngine->GetStream();
+
 	const int numCars = static_cast<int>(_cars.size());
 	if (numCars > _gpuCarsCapacity) {
 		RS_ERR_CLOSE("GPU car capacity mismatch in _SyncStatesFromGPU! This should never happen.");
 	}
 
 	GpuBallState gpuBall = {};
-	CUDA_CHECK(cudaMemcpy(&gpuBall, _gpuBall, sizeof(GpuBallState), cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpyAsync(&gpuBall, _gpuBall, sizeof(GpuBallState), cudaMemcpyDeviceToHost, stream));
+	CUDA_CHECK(cudaStreamSynchronize(stream));
 
 	std::vector<GpuCarState> gpuCarsHost;
 	if (numCars > 0) {
 		gpuCarsHost.resize(numCars);
-		CUDA_CHECK(cudaMemcpy(
+		CUDA_CHECK(cudaMemcpyAsync(
 			gpuCarsHost.data(),
 			_gpuCars,
 			size_t(numCars) * sizeof(GpuCarState),
-			cudaMemcpyDeviceToHost
+			cudaMemcpyDeviceToHost,
+			stream
 		));
+		CUDA_CHECK(cudaStreamSynchronize(stream));
 	}
 
 	auto isFiniteGpuVec = [](const GpuVec3& v) {

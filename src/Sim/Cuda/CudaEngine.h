@@ -6,6 +6,7 @@
 #include "CarKernels.h"
 #include "CollisionKernels.h"
 #include <vector>
+#include <mutex>
 
 RS_NS_START
 
@@ -52,15 +53,39 @@ public:
     // Synchronize GPU (wait for all operations to complete)
     void Synchronize();
 
+    // Ensure the CUDA primary context for this device is current on the calling thread.
+    void MakeContextCurrent();
+
     // Accessor for internal stream so all kernel launches share one sync domain.
     cudaStream_t GetStream() const { return stream_; }
     
-    // Get memory manager
+    // Thread-safe allocate device memory (holds alloc_mutex during operation)
+    template<typename T>
+    T* AllocateDeviceSafe(size_t count) {
+        std::lock_guard<std::recursive_mutex> lock(alloc_mutex_);
+        MakeContextCurrent();  // Ensure context on this thread
+        return memoryManager_.AllocateDevice<T>(count);
+    }
+    
+    // Thread-safe free device memory (holds alloc_mutex during operation)
+    template<typename T>
+    void FreeDeviceSafe(T*& ptr) {
+        if (ptr) {
+            std::lock_guard<std::recursive_mutex> lock(alloc_mutex_);
+            MakeContextCurrent();  // Ensure context on this thread
+            memoryManager_.Free(ptr);
+            ptr = nullptr;
+        }
+    }
+    
+    // Get memory manager (should only be used under lock from AllocateDeviceSafe/FreeDeviceSafe)
     CudaMemoryManager& GetMemoryManager() { return memoryManager_; }
     
 private:
     bool enabled_;
+    int deviceId_;
     CudaMemoryManager memoryManager_;
+    mutable std::recursive_mutex alloc_mutex_;  // Protect concurrent GPU memory allocations
     
     // CUDA streams for async operations
     cudaStream_t stream_;

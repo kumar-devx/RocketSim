@@ -6,7 +6,7 @@
 
 RS_NS_START
 
-CudaEngine::CudaEngine() : enabled_(false), stream_(0) {
+CudaEngine::CudaEngine() : enabled_(false), deviceId_(0), stream_(0) {
 }
 
 CudaEngine::~CudaEngine() {
@@ -32,6 +32,7 @@ bool CudaEngine::Initialize() {
 
     int activeDevice = 0;
     CUDA_CHECK(cudaGetDevice(&activeDevice));
+    deviceId_ = activeDevice;
 
     cudaDeviceProp prop;
     CUDA_CHECK(cudaGetDeviceProperties(&prop, activeDevice));
@@ -95,6 +96,7 @@ void CudaEngine::UpdateArena(
     float deltaTime
 ) {
     if (!enabled_) return;
+    MakeContextCurrent();
     
     // Update ball physics
     if (ball) {
@@ -127,6 +129,7 @@ void CudaEngine::UpdateArenaBatch(
     float deltaTime
 ) {
     if (!enabled_) return;
+    MakeContextCurrent();
     
     // Update all balls in parallel
     LaunchBallPhysicsKernel(balls, numArenas, deltaTime, stream_);
@@ -156,8 +159,16 @@ void CudaEngine::UpdateArenaBatch(
 
 void CudaEngine::Synchronize() {
     if (enabled_) {
+        MakeContextCurrent();
         CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
+}
+
+void CudaEngine::MakeContextCurrent() {
+    if (!enabled_) {
+        return;
+    }
+    CUDA_CHECK(cudaSetDevice(deviceId_));
 }
 
 void CudaEngine::UpdateArenaBatchFullPhysics(
@@ -168,6 +179,7 @@ void CudaEngine::UpdateArenaBatchFullPhysics(
     const GpuArenaCollisionData* arenaCollision
 ) {
     if (!enabled_) return;
+    MakeContextCurrent();
     
     // Launch the complete GPU physics pipeline
     // This handles ALL physics and collisions without Bullet involvement
