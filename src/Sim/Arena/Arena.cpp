@@ -521,7 +521,15 @@ void Arena::Step(int ticksToSimulate) {
 					 "CUDA must be initialized before creating arenas.");
 	}
 
-	_StepGPU(ticksToSimulate);
+	// Capture current controls for every car and queue them for each tick
+	// so Step() behaves identically to the old per-tick model.
+	std::unordered_map<uint32_t, CarControls> snapshot;
+	for (Car* car : _cars)
+		snapshot[car->id] = car->controls;
+	for (int i = 0; i < ticksToSimulate; i++)
+		_actionQueue.push_back(snapshot);
+
+	FlushGPU(ticksToSimulate);
 }
 
 // Returns negative: within
@@ -795,6 +803,14 @@ void Arena::_CleanupCudaBuffers() {
 	// Arena collision data is immutable and shared across arenas for the process lifetime.
 	_gpuArenaCollision = nullptr;
 
+	// Action buffer is arena-private — free it.
+	if (_gpuActionBuffer) {
+		cudaEngine->FreeDeviceSafe<GpuCarControls>(_gpuActionBuffer);
+		// FreeDeviceSafe nulls the pointer.
+	}
+	_gpuActionBufferSlots = 0;
+	_actionQueue.clear();
+
 	_useCuda = false;
 }
 
@@ -808,7 +824,7 @@ void Arena::_SyncStatesToGPU() {
 
 	cudaEngine->MakeContextCurrent();
 	(void)cudaGetLastError();
-	cudaStream_t stream = cudaEngine->GetStream();
+	cudaStream_t stream = cudaEngine->GetStreamForArena(this);
 
 	const int numCars = static_cast<int>(_cars.size());
 	if (numCars > _gpuCarsCapacity) {
@@ -970,7 +986,7 @@ void Arena::_SyncStatesFromGPU() {
 	}
 
 	cudaEngine->MakeContextCurrent();
-	cudaStream_t stream = cudaEngine->GetStream();
+	cudaStream_t stream = cudaEngine->GetStreamForArena(this);
 
 	const int numCars = static_cast<int>(_cars.size());
 	if (numCars > _gpuCarsCapacity) {
@@ -1121,77 +1137,196 @@ void Arena::_SyncStatesFromGPU() {
 	}
 }
 
-void Arena::_StepGPU(int ticksToSimulate) {
+// ---------------------------------------------------------------------------
+// _GetArenaStream
+// ---------------------------------------------------------------------------
+
+cudaStream_t Arena::_GetArenaStream() const {
 	auto* cudaEngine = RocketSim::GetCudaEngine();
-	if (!cudaEngine || !cudaEngine->IsEnabled()) {
-		RS_ERR_CLOSE("GPU acceleration required but CUDA engine not available!");
+	if (!cudaEngine) return 0;
+	return cudaEngine->GetStreamForArena(this);
+}
+
+// ---------------------------------------------------------------------------
+// QueueActions — non-blocking; just accumulates one tick's controls.
+// ---------------------------------------------------------------------------
+
+void Arena::QueueActions(const std::unordered_map<uint32_t, CarControls>& carActions) {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+	_actionQueue.push_back(carActions);
+}
+
+// ---------------------------------------------------------------------------
+// FlushGPU — the core "true GPU ownership" tick path.
+//
+// Flow:
+//   1. Pack host-side action buffer for all ticksToSimulate ticks.
+//   2. H2D: current CPU state → GPU (once).
+//   3. H2D: all actions → _gpuActionBuffer (once).
+//   4. N × (ApplyControlsKernel + LaunchGpuFullPhysicsStep) on the per-arena
+//      stream — NO CPU stalls between ticks.
+//   5. D2H: final GPU state → CPU (once, with one stream sync).
+//   6. CPU gameplay logic (boost pads, callbacks) on the final positions.
+// ---------------------------------------------------------------------------
+
+void Arena::FlushGPU(int ticksToSimulate) {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+
+	if (!_useCuda || !_gpuBall || !_gpuCars) {
+		RS_ERR_CLOSE("Arena::FlushGPU() called but GPU buffers not initialized!");
 	}
 
-	for (int i = 0; i < ticksToSimulate; i++) {
-		// Sync CPU state to GPU
-		_SyncStatesToGPU();
-		
-		int numCars = static_cast<int>(_cars.size());
-		cudaEngine->UpdateArenaBatchFullPhysics(
-			_gpuBall,
-			_gpuCars,
-			numCars,
-			tickTime,
-			_gpuArenaCollision
-		);
-		
-		// Wait for GPU to finish
-		cudaEngine->Synchronize();
-		
-		// Sync GPU state back to CPU
-		_SyncStatesFromGPU();
-		
-		// Update boost pads (CPU-side only)
-		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
-		bool ballOnly = _cars.empty();
-		
-		if (hasArenaStuff && !ballOnly) {
-			for (BoostPad* pad : _boostPads)
-				pad->_PreTickUpdate(tickTime);
-		}
-		
-		// Physics integration is GPU-owned. CPU side only handles gameplay logic below.
-		
-		// Boost pad collision check
-		if (hasArenaStuff) {
-			for (Car* car : _cars) {
-				if (_config.useCustomBoostPads) {
-					for (auto& boostPad : _boostPads) {
-						boostPad->_CheckCollide(car);
-					}
-				} else {
-					_boostPadGrid.CheckCollision(car);
+	auto* cudaEngine = RocketSim::GetCudaEngine();
+	if (!cudaEngine || !cudaEngine->IsEnabled()) {
+		RS_ERR_CLOSE("Arena::FlushGPU() — CUDA engine not available!");
+	}
+
+	const int numCars  = static_cast<int>(_cars.size());
+	const int numTicks = ticksToSimulate;
+
+	// Build an ordered car list matching the GPU array layout used by _SyncStatesToGPU.
+	std::vector<uint32_t> carIdOrder;
+	carIdOrder.reserve(numCars);
+	for (Car* car : _cars)
+		carIdOrder.push_back(car->id);
+
+	// --- Pack host-side action buffer -------------------------------------------
+	// Layout: [tick0_car0 .. tick0_car(N-1), tick1_car0 .. tick1_car(N-1), ...]
+	const int totalSlots = numTicks * RS_MAX(numCars, 1);
+	std::vector<GpuCarControls> hostActionBuffer(totalSlots);
+
+	for (int t = 0; t < numTicks; t++) {
+		const std::unordered_map<uint32_t, CarControls>* tickActions = nullptr;
+		if (t < static_cast<int>(_actionQueue.size()))
+			tickActions = &_actionQueue[t];
+
+		for (int c = 0; c < numCars; c++) {
+			GpuCarControls& slot = hostActionBuffer[t * numCars + c];
+			slot.carArrayIdx = static_cast<uint32_t>(c);
+
+			if (tickActions) {
+				auto it = tickActions->find(carIdOrder[c]);
+				if (it != tickActions->end()) {
+					const CarControls& ctrl = it->second;
+					slot.throttle  = ctrl.throttle;
+					slot.steer     = ctrl.steer;
+					slot.pitch     = ctrl.pitch;
+					slot.yaw       = ctrl.yaw;
+					slot.roll      = ctrl.roll;
+					slot.jump      = ctrl.jump      ? 1 : 0;
+					slot.boost     = ctrl.boost     ? 1 : 0;
+					slot.handbrake = ctrl.handbrake ? 1 : 0;
+					slot._pad      = 0;
+					continue;
 				}
 			}
+			// No entry for this car/tick — use zero controls.
+			slot.throttle = slot.steer = slot.pitch = slot.yaw = slot.roll = 0.0f;
+			slot.jump = slot.boost = slot.handbrake = 0;
+			slot._pad = 0;
 		}
-		
-		if (hasArenaStuff && !ballOnly) {
-			for (BoostPad* pad : _boostPads)
-				pad->_PostTickUpdate(tickTime, _mutatorConfig);
-		}
-		
-		// Dropshot tiles
-		if (gameMode == GameMode::DROPSHOT) {
-			if (ball->_internalState.dsInfo.lastDamageTick && 
-			    ball->_internalState.dsInfo.lastDamageTick == tickCount) {
-				SetDropshotTilesState(_dropshotTilesState);
-			}
-		}
-		
-		// Goal score callback
-		if (_goalScoreCallback.func != NULL) {
-			if (IsBallScored()) {
-				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_internalState.pos.y), _goalScoreCallback.userInfo);
-			}
-		}
-		
-		tickCount++;
 	}
+	_actionQueue.clear();
+
+	// --- Ensure GPU action-buffer capacity --------------------------------------
+	if (numCars > 0 && totalSlots > _gpuActionBufferSlots) {
+		if (_gpuActionBuffer)
+			cudaEngine->FreeDeviceSafe<GpuCarControls>(_gpuActionBuffer);
+		_gpuActionBufferSlots = RS_MAX(totalSlots * 2, 64);
+		_gpuActionBuffer = cudaEngine->AllocateDeviceSafe<GpuCarControls>(_gpuActionBufferSlots);
+		if (!_gpuActionBuffer)
+			RS_ERR_CLOSE("Arena::FlushGPU() — failed to allocate GPU action buffer!");
+	}
+
+	cudaStream_t stream = _GetArenaStream();
+
+	// --- Step 1: H2D — current CPU arena state → GPU (one copy) ----------------
+	_SyncStatesToGPU();  // uses same per-arena stream internally
+
+	// --- Step 2: H2D — actions → GPU (one copy) ---------------------------------
+	if (numCars > 0) {
+		CUDA_CHECK(cudaMemcpyAsync(
+			_gpuActionBuffer,
+			hostActionBuffer.data(),
+			static_cast<size_t>(totalSlots) * sizeof(GpuCarControls),
+			cudaMemcpyHostToDevice,
+			stream
+		));
+	}
+
+	// --- Step 3: N kernels on GPU, no CPU stalls --------------------------------
+	cudaEngine->UpdateArenaMultiTick(
+		_gpuBall,
+		_gpuCars,
+		numCars,
+		(numCars > 0) ? _gpuActionBuffer : nullptr,
+		numTicks,
+		tickTime,
+		_gpuArenaCollision,
+		stream
+	);
+
+	// --- Step 4: D2H — final GPU state → CPU (one copy + one stream sync) ------
+	_SyncStatesFromGPU();  // issues async D2H then cudaStreamSynchronize internally
+
+	// --- Step 5: CPU-side gameplay logic (uses final positions) -----------------
+	const bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
+	const bool ballOnly      = _cars.empty();
+
+	if (hasArenaStuff && !ballOnly) {
+		// Advance boost pad cooldown timers for all ticks at once.
+		for (int i = 0; i < numTicks; i++)
+			for (BoostPad* pad : _boostPads)
+				pad->_PreTickUpdate(tickTime);
+	}
+
+	// Boost pickup collision uses final car positions only.
+	// NOTE: pickups that occurred at intermediate positions are not detected —
+	// this is a known trade-off of the batched-flush model.
+	if (hasArenaStuff) {
+		for (Car* car : _cars) {
+			if (_config.useCustomBoostPads) {
+				for (auto& boostPad : _boostPads)
+					boostPad->_CheckCollide(car);
+			} else {
+				_boostPadGrid.CheckCollision(car);
+			}
+		}
+	}
+
+	if (hasArenaStuff && !ballOnly) {
+		for (BoostPad* pad : _boostPads)
+			pad->_PostTickUpdate(tickTime, _mutatorConfig);
+	}
+
+	// Dropshot tile update.
+	if (gameMode == GameMode::DROPSHOT) {
+		if (ball->_internalState.dsInfo.lastDamageTick &&
+		    ball->_internalState.dsInfo.lastDamageTick == tickCount) {
+			SetDropshotTilesState(_dropshotTilesState);
+		}
+	}
+
+	// Goal-score callback (checked once against final ball position).
+	if (_goalScoreCallback.func != nullptr && IsBallScored()) {
+		_goalScoreCallback.func(
+			this,
+			RS_TEAM_FROM_Y(-ball->_internalState.pos.y),
+			_goalScoreCallback.userInfo
+		);
+	}
+
+	tickCount += numTicks;
+}
+
+// ---------------------------------------------------------------------------
+// SyncToCPU — explicit D2H readback (useful if external code modified GPU state)
+// ---------------------------------------------------------------------------
+
+void Arena::SyncToCPU() {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+	if (_useCuda && _gpuBall)
+		_SyncStatesFromGPU();
 }
 
 RS_NS_END

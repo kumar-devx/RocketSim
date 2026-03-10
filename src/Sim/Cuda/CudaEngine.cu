@@ -6,13 +6,16 @@
 
 RS_NS_START
 
-CudaEngine::CudaEngine() : enabled_(false), deviceId_(0), stream_(0) {
+CudaEngine::CudaEngine() : enabled_(false), deviceId_(0) {
+    for (int i = 0; i < NUM_STREAMS; i++) streams_[i] = 0;
 }
 
 CudaEngine::~CudaEngine() {
-    if (stream_) {
-        cudaStreamDestroy(stream_);
-        stream_ = nullptr;
+    for (int i = 0; i < NUM_STREAMS; i++) {
+        if (streams_[i]) {
+            cudaStreamDestroy(streams_[i]);
+            streams_[i] = nullptr;
+        }
     }
 }
 
@@ -58,17 +61,22 @@ bool CudaEngine::Initialize() {
         std::cerr << "Kernel launches may fail until the NVIDIA driver is updated." << std::endl;
     }
 
-    // Create CUDA stream for async operations
-    cudaError_t err = cudaStreamCreate(&stream_);
-    if (err != cudaSuccess) {
-        std::cerr << "FATAL: Failed to create CUDA stream: " << cudaGetErrorString(err) << std::endl;
-        enabled_ = false;
-        return false;
+    // Create the pool of independent CUDA streams
+    for (int i = 0; i < NUM_STREAMS; i++) {
+        cudaError_t err = cudaStreamCreate(&streams_[i]);
+        if (err != cudaSuccess) {
+            std::cerr << "FATAL: Failed to create CUDA stream " << i << ": "
+                      << cudaGetErrorString(err) << std::endl;
+            // Destroy any already-created streams before returning
+            for (int j = 0; j < i; j++) { cudaStreamDestroy(streams_[j]); streams_[j] = nullptr; }
+            enabled_ = false;
+            return false;
+        }
     }
 
     // Test GPU memory allocation (MANDATORY)
     void* test_ptr = nullptr;
-    err = cudaMalloc(&test_ptr, 1024 * 1024); // 1MB test
+    cudaError_t err = cudaMalloc(&test_ptr, 1024 * 1024); // 1MB test
     if (err != cudaSuccess) {
         std::cerr << "FATAL: Failed to allocate GPU memory: " << cudaGetErrorString(err) << std::endl;
         std::cerr << "GPU is present but cannot allocate memory!" << std::endl;
@@ -85,9 +93,16 @@ bool CudaEngine::Initialize() {
     }
 
     enabled_ = true;
-    std::cout << "CUDA initialized successfully!" << std::endl;
+    std::cout << "CUDA initialized successfully! (" << NUM_STREAMS << " streams)" << std::endl;
     std::cout << "GPU-ONLY MODE: CPU fallback disabled" << std::endl;
     return true;
+}
+
+cudaStream_t CudaEngine::GetStreamForArena(const void* arenaPtr) const {
+    // Mix pointer bits for better distribution across the pool
+    size_t h = reinterpret_cast<size_t>(arenaPtr);
+    h ^= h >> 16;
+    return streams_[h % NUM_STREAMS];
 }
 
 void CudaEngine::UpdateArena(
@@ -160,7 +175,16 @@ void CudaEngine::UpdateArenaBatch(
 void CudaEngine::Synchronize() {
     if (enabled_) {
         MakeContextCurrent();
-        CUDA_CHECK(cudaStreamSynchronize(stream_));
+        for (int i = 0; i < NUM_STREAMS; i++) {
+            if (streams_[i]) CUDA_CHECK(cudaStreamSynchronize(streams_[i]));
+        }
+    }
+}
+
+void CudaEngine::SynchronizeStream(cudaStream_t stream) {
+    if (enabled_ && stream) {
+        MakeContextCurrent();
+        CUDA_CHECK(cudaStreamSynchronize(stream));
     }
 }
 
@@ -176,25 +200,62 @@ void CudaEngine::UpdateArenaBatchFullPhysics(
     GpuCarState* cars,
     int numCars,
     float deltaTime,
-    const GpuArenaCollisionData* arenaCollision
+    const GpuArenaCollisionData* arenaCollision,
+    cudaStream_t stream
 ) {
     if (!enabled_) return;
     MakeContextCurrent();
-    
-    // Launch the complete GPU physics pipeline
-    // This handles ALL physics and collisions without Bullet involvement
+
+    cudaStream_t activeStream = stream ? stream : streams_[0];
     LaunchGpuFullPhysicsStep(
         ball,
-        1,  // Always 1 ball per arena
+        1,
         cars,
         numCars,
         deltaTime,
-        nullptr,  // collision grid - nullptr for now (using simplified collision)
-        arenaCollision,  // Phase 2: Mesh collision data
-        stream_
+        nullptr,
+        arenaCollision,
+        activeStream
     );
-    
     CUDA_CHECK(cudaGetLastError());
+}
+
+void CudaEngine::UpdateArenaMultiTick(
+    GpuBallState* ball,
+    GpuCarState* cars,
+    int numCars,
+    const GpuCarControls* d_actionsAllTicks,
+    int numTicks,
+    float deltaTime,
+    const GpuArenaCollisionData* arenaCollision,
+    cudaStream_t stream
+) {
+    if (!enabled_) return;
+    MakeContextCurrent();
+
+    for (int t = 0; t < numTicks; t++) {
+        // Write this tick's controls into car state (one thread per car, no sync needed).
+        if (numCars > 0 && d_actionsAllTicks) {
+            LaunchApplyControlsKernel(
+                cars, numCars,
+                d_actionsAllTicks + static_cast<ptrdiff_t>(t) * numCars,
+                stream
+            );
+        }
+
+        // Full physics step: ball + car integration, all collisions.
+        // No cudaStreamSynchronize between ticks — same-stream ordering guarantees
+        // that each kernel sees the results of the previous one.
+        LaunchGpuFullPhysicsStep(
+            ball, 1,
+            cars, numCars,
+            deltaTime,
+            nullptr,
+            arenaCollision,
+            stream
+        );
+        CUDA_CHECK(cudaGetLastError());
+    }
 }
 
 RS_NS_END

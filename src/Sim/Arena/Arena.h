@@ -17,6 +17,7 @@ RS_NS_START
 struct GpuBallState;
 struct GpuCarState;
 struct GpuArenaCollisionData;
+struct GpuCarControls;
 
 typedef std::function<void(class Arena* arena, Team scoringTeam, void* userInfo)> GoalScoreEventFn;
 typedef std::function<void(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo)> CarBumpEventFn;
@@ -113,8 +114,27 @@ public:
 	// NOTE: Car ID will not be restored
 	Car* DeserializeNewCar(DataStreamIn& in, Team team);
 
-	// Simulate everything in the arena for a given number of ticks
+	// Simulate everything in the arena for a given number of ticks.
+	// Backward-compatible: captures current car controls and calls FlushGPU().
 	void Step(int ticksToSimulate = 1);
+
+	// ── True GPU-Ownership API ───────────────────────────────────────────────
+	//
+	// Queue actions for one upcoming tick without touching the GPU.
+	// Call this once per logical step before the FlushGPU batch.
+	// carActions maps car ID → controls for this tick.
+	void QueueActions(const std::unordered_map<uint32_t, CarControls>& carActions);
+
+	// Run all queued ticks on the GPU with a single H2D upload + D2H readback.
+	// Kernels for ticks [0..ticksToSimulate-1] are issued sequentially on one
+	// CUDA stream, so the GPU executes them with no CPU stalls in between.
+	// If fewer actions were queued than ticksToSimulate, remaining ticks use
+	// zero controls.  The action queue is cleared after the call.
+	void FlushGPU(int ticksToSimulate);
+
+	// Explicit device→host sync.  Not needed after FlushGPU (it syncs internally);
+	// useful if external code wrote into GPU buffers and wants CPU state refreshed.
+	void SyncToCPU();
 
 	void ResetToRandomKickoff(int seed = -1);
 
@@ -145,15 +165,22 @@ public:
 
 	// CUDA GPU acceleration support
 	bool _useCuda = false;
-	GpuBallState* _gpuBall = nullptr;
-	GpuCarState* _gpuCars = nullptr;
-	int _gpuCarsCapacity = 0;
-	
+	GpuBallState*      _gpuBall            = nullptr;
+	GpuCarState*       _gpuCars            = nullptr;
+	int                _gpuCarsCapacity    = 0;
+	GpuCarControls*    _gpuActionBuffer    = nullptr;  // Device buffer for queued actions
+	int                _gpuActionBufferSlots = 0;       // Capacity in slots (maxTicks * maxCars)
+
+	// Queued actions: one map<carID, controls> per upcoming tick.
+	std::vector<std::unordered_map<uint32_t, CarControls>> _actionQueue;
+
 	void _InitCudaBuffers();
 	void _CleanupCudaBuffers();
 	void _SyncStatesToGPU();
 	void _SyncStatesFromGPU();
-	void _StepGPU(int ticksToSimulate);
+
+	// Returns the CUDA stream assigned to this arena from the engine's pool.
+	cudaStream_t _GetArenaStream() const;
 
 private:
 	mutable std::recursive_mutex _arenaMutex;

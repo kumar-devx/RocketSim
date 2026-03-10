@@ -29,6 +29,16 @@ struct GpuArenaCollisionGrid {
     // - Cell occupancy data for broad phase
 };
 
+// Apply one tick's worth of queued controls into the cars[] array on GPU.
+// d_controls[i] maps to cars[d_controls[i].carArrayIdx].
+// Call this each tick before LaunchGpuFullPhysicsStep in the multi-tick loop.
+void LaunchApplyControlsKernel(
+    GpuCarState* cars,
+    int numCars,
+    const GpuCarControls* d_controls,
+    cudaStream_t stream
+);
+
 // Launch the complete GPU physics step
 // Handles ball physics, car physics, and all collisions including mesh collisions
 void LaunchGpuFullPhysicsStep(

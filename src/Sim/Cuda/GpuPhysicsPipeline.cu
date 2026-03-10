@@ -316,6 +316,47 @@ CUDA_KERNEL void GpuCarCarCollisionKernel(
 }
 
 // ============================================================================
+// CONTROLS APPLICATION KERNEL
+// Writes one tick's queued controls into each car's GpuCarState before physics.
+// ============================================================================
+
+CUDA_KERNEL void ApplyControlsKernelImpl(
+    GpuCarState* cars,
+    int numCars,
+    const GpuCarControls* controls
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= numCars) return;
+
+    const GpuCarControls& ctrl = controls[idx];
+    uint32_t carIdx = (ctrl.carArrayIdx < (uint32_t)numCars) ? ctrl.carArrayIdx : (uint32_t)idx;
+    GpuCarState& car = cars[carIdx];
+
+    car.throttle   = ctrl.throttle;
+    car.steer      = ctrl.steer;
+    car.pitch      = ctrl.pitch;
+    car.yaw        = ctrl.yaw;
+    car.roll       = ctrl.roll;
+    car.jump       = ctrl.jump      != 0;
+    car.boost      = ctrl.boost     != 0;
+    car.handbrake  = ctrl.handbrake != 0;
+    car.isBoosting = (ctrl.boost != 0) && (car.boost_amount > 0.0f);
+}
+
+void LaunchApplyControlsKernel(
+    GpuCarState* cars,
+    int numCars,
+    const GpuCarControls* d_controls,
+    cudaStream_t stream
+) {
+    if (numCars <= 0 || !d_controls) return;
+    const int threadsPerBlock = 256;
+    int numBlocks = (numCars + threadsPerBlock - 1) / threadsPerBlock;
+    ApplyControlsKernelImpl<<<numBlocks, threadsPerBlock, 0, stream>>>(cars, numCars, d_controls);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+// ============================================================================
 // HOST LAUNCHER FUNCTIONS
 // ============================================================================
 

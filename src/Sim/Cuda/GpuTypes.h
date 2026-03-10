@@ -250,6 +250,21 @@ struct GpuArenaConfig {
     bool hasBall;
 };
 
+// Per-car, per-tick controls uploaded to GPU by FlushGPU() for the multi-tick batch path.
+// Layout keeps floats first, then int-packed bools, for GPU alignment.
+struct GpuCarControls {
+    float throttle;
+    float steer;
+    float pitch;
+    float yaw;
+    float roll;
+    int32_t  jump;          // 0 or 1
+    int32_t  boost;         // 0 or 1
+    int32_t  handbrake;     // 0 or 1
+    uint32_t carArrayIdx;   // Index of this car in the GPU cars[] array
+    int32_t  _pad;          // Keep size a multiple of 8 bytes
+};
+
 // Conversion helpers (CPU <-> GPU)
 inline GpuVec3 ToGpuVec3(const Vec& v) {
     return {v.x, v.y, v.z};
