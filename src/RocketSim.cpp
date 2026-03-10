@@ -52,6 +52,22 @@ const std::vector<CollisionMeshFile>& RocketSim::GetArenaCollisionMeshes(GameMod
 	return GetArenaCollisionMeshMap()[gameMode];
 }
 
+// DEPRECATED: Backward compatibility wrapper
+std::vector<btBvhTriangleMeshShape*>& RocketSim::GetArenaCollisionShapes(GameMode gameMode) {
+	static std::vector<btBvhTriangleMeshShape*> emptyVector;
+	static bool warningShown = false;
+	
+	if (!warningShown) {
+		RS_WARN("GetArenaCollisionShapes() is deprecated in GPU version!");
+		RS_WARN("GPU version doesn't use Bullet btBvhTriangleMeshShape - use GetArenaCollisionMeshes() instead.");
+		RS_WARN("Returning empty vector for backward compatibility.");
+		warningShown = true;
+	}
+	
+	emptyVector.clear();
+	return emptyVector;
+}
+
 void RocketSim::Init(std::filesystem::path collisionMeshesFolder, bool silent) {
 
 	std::map<GameMode, std::vector<FileData>> meshFileMap = {};

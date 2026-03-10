@@ -767,6 +767,18 @@ void Arena::_SyncStatesToGPU() {
 	_gpuBall->maxSpeed = _mutatorConfig.ballMaxSpeed;
 	_gpuBall->tickCount = tickCount;
 	
+	// Sync heatseeker info
+	_gpuBall->hsInfo.yTargetDir = ballState.hsInfo.yTargetDir;
+	_gpuBall->hsInfo.curTargetSpeed = ballState.hsInfo.curTargetSpeed;
+	_gpuBall->hsInfo.timeSinceHit = ballState.hsInfo.timeSinceHit;
+	
+	// Sync dropshot info
+	_gpuBall->dsInfo.chargeLevel = ballState.dsInfo.chargeLevel;
+	_gpuBall->dsInfo.accumulatedHitForce = ballState.dsInfo.accumulatedHitForce;
+	_gpuBall->dsInfo.yTargetDir = ballState.dsInfo.yTargetDir;
+	_gpuBall->dsInfo.hasDamaged = ballState.dsInfo.hasDamaged;
+	_gpuBall->dsInfo.lastDamageTick = ballState.dsInfo.lastDamageTick;
+	
 	// Sync car states
 	int carIdx = 0;
 	for (Car* car : _cars) {
@@ -831,6 +843,44 @@ void Arena::_SyncStatesToGPU() {
 		gpuCar.numWheels = 4;
 		gpuCar.tickCount = tickCount;
 		
+		// Additional state tracking
+		gpuCar.isSupersonic = carState.isSupersonic;
+		gpuCar.supersonicTime = carState.supersonicTime;
+		gpuCar.timeSinceBoosted = carState.timeSinceBoosted;
+		gpuCar.airTime = carState.airTime;
+		
+		// Auto-flip state
+		gpuCar.isAutoFlipping = carState.isAutoFlipping;
+		gpuCar.autoFlipTimer = carState.autoFlipTimer;
+		gpuCar.autoFlipTorqueScale = carState.autoFlipTorqueScale;
+		
+		// World contact
+		gpuCar.worldContact.hasContact = carState.worldContact.hasContact;
+		gpuCar.worldContact.contactNormal = ToGpuVec3(carState.worldContact.contactNormal);
+		
+		// Car contact
+		gpuCar.carContact.otherCarID = carState.carContact.otherCarID;
+		gpuCar.carContact.cooldownTimer = carState.carContact.cooldownTimer;
+		
+		// Demo
+		gpuCar.demoRespawnTimer = carState.demoRespawnTimer;
+		
+		// Ball hit info
+		gpuCar.ballHitInfo.isValid = carState.ballHitInfo.isValid;
+		gpuCar.ballHitInfo.ticksSinceHit = carState.ballHitInfo.ticksSinceHit;
+		gpuCar.ballHitInfo.ballPos = ToGpuVec3(carState.ballHitInfo.ballPos);
+		gpuCar.ballHitInfo.distFromBall = carState.ballHitInfo.distFromBall;
+		
+		// Last controls
+		gpuCar.lastControls.throttle = carState.lastControls.throttle;
+		gpuCar.lastControls.steer = carState.lastControls.steer;
+		gpuCar.lastControls.pitch = carState.lastControls.pitch;
+		gpuCar.lastControls.yaw = carState.lastControls.yaw;
+		gpuCar.lastControls.roll = carState.lastControls.roll;
+		gpuCar.lastControls.jump = carState.lastControls.jump;
+		gpuCar.lastControls.boost = carState.lastControls.boost;
+		gpuCar.lastControls.handbrake = carState.lastControls.handbrake;
+		
 		carIdx++;
 	}
 }
@@ -857,6 +907,19 @@ void Arena::_SyncStatesFromGPU() {
 	ballState.vel = FromGpuVec3(_gpuBall->vel);
 	ballState.angVel = FromGpuVec3(_gpuBall->angVel);
 	ballState.rotMat = FromGpuMat3x3(_gpuBall->rotMat);
+	
+	// Sync heatseeker info back
+	ballState.hsInfo.yTargetDir = _gpuBall->hsInfo.yTargetDir;
+	ballState.hsInfo.curTargetSpeed = _gpuBall->hsInfo.curTargetSpeed;
+	ballState.hsInfo.timeSinceHit = _gpuBall->hsInfo.timeSinceHit;
+	
+	// Sync dropshot info back
+	ballState.dsInfo.chargeLevel = _gpuBall->dsInfo.chargeLevel;
+	ballState.dsInfo.accumulatedHitForce = _gpuBall->dsInfo.accumulatedHitForce;
+	ballState.dsInfo.yTargetDir = _gpuBall->dsInfo.yTargetDir;
+	ballState.dsInfo.hasDamaged = _gpuBall->dsInfo.hasDamaged;
+	ballState.dsInfo.lastDamageTick = _gpuBall->dsInfo.lastDamageTick;
+	
 	ball->_internalState = ballState;
 	ball->_internalState.tickCountSinceUpdate = 0;
 	
@@ -882,6 +945,67 @@ void Arena::_SyncStatesFromGPU() {
 		carState.isOnGround = gpuCar.isOnGround;
 		carState.isDemoed = gpuCar.isDemoed;
 		carState.boost = gpuCar.boost_amount;
+		
+		// Sync all state flags
+		carState.hasJumped = gpuCar.hasJumped;
+		carState.hasDoubleJumped = gpuCar.hasDoubleJumped;
+		carState.hasFlipped = gpuCar.hasFlipped;
+		carState.isJumping = gpuCar.isJumping;
+		carState.isFlipping = gpuCar.isFlipping;
+		carState.isBoosting = gpuCar.isBoosting;
+		
+		// Sync timers
+		carState.jumpTime = gpuCar.jumpTime;
+		carState.flipTime = gpuCar.flipTime;
+		carState.airTimeSinceJump = gpuCar.airTimeSinceJump;
+		carState.boostingTime = gpuCar.boostingTime;
+		carState.handbrakeVal = gpuCar.handbrakeVal;
+		
+		// Sync flip state
+		carState.flipRelTorque = FromGpuVec3(gpuCar.flipRelTorque);
+		
+		// Sync additional state tracking
+		carState.isSupersonic = gpuCar.isSupersonic;
+		carState.supersonicTime = gpuCar.supersonicTime;
+		carState.timeSinceBoosted = gpuCar.timeSinceBoosted;
+		carState.airTime = gpuCar.airTime;
+		
+		// Sync auto-flip state
+		carState.isAutoFlipping = gpuCar.isAutoFlipping;
+		carState.autoFlipTimer = gpuCar.autoFlipTimer;
+		carState.autoFlipTorqueScale = gpuCar.autoFlipTorqueScale;
+		
+		// Sync world contact
+		carState.worldContact.hasContact = gpuCar.worldContact.hasContact;
+		carState.worldContact.contactNormal = FromGpuVec3(gpuCar.worldContact.contactNormal);
+		
+		// Sync car contact
+		carState.carContact.otherCarID = gpuCar.carContact.otherCarID;
+		carState.carContact.cooldownTimer = gpuCar.carContact.cooldownTimer;
+		
+		// Sync demo
+		carState.demoRespawnTimer = gpuCar.demoRespawnTimer;
+		
+		// Sync ball hit info
+		carState.ballHitInfo.isValid = gpuCar.ballHitInfo.isValid;
+		carState.ballHitInfo.ticksSinceHit = gpuCar.ballHitInfo.ticksSinceHit;
+		carState.ballHitInfo.ballPos = FromGpuVec3(gpuCar.ballHitInfo.ballPos);
+		carState.ballHitInfo.distFromBall = gpuCar.ballHitInfo.distFromBall;
+		
+		// Sync last controls
+		carState.lastControls.throttle = gpuCar.lastControls.throttle;
+		carState.lastControls.steer = gpuCar.lastControls.steer;
+		carState.lastControls.pitch = gpuCar.lastControls.pitch;
+		carState.lastControls.yaw = gpuCar.lastControls.yaw;
+		carState.lastControls.roll = gpuCar.lastControls.roll;
+		carState.lastControls.jump = gpuCar.lastControls.jump;
+		carState.lastControls.boost = gpuCar.lastControls.boost;
+		carState.lastControls.handbrake = gpuCar.lastControls.handbrake;
+		
+		// Sync wheel contacts
+		for (int w = 0; w < 4; w++) {
+			carState.wheelsWithContact[w] = gpuCar.wheels[w].hasContact;
+		}
 		
 		car->_internalState = carState;
 		car->_internalState.tickCountSinceUpdate = 0;

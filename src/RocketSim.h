@@ -39,6 +39,12 @@ namespace RocketSim {
 
 	const std::vector<CollisionMeshFile>& GetArenaCollisionMeshes(GameMode gameMode);
 
+	// DEPRECATED: Backward compatibility wrapper for CPU version API
+	// GPU version doesn't use Bullet shapes - use GetArenaCollisionMeshes() instead
+	// This returns an empty vector and logs a deprecation warning
+	[[deprecated("Use GetArenaCollisionMeshes() instead - GPU version doesn't use Bullet shapes")]]
+	std::vector<class btBvhTriangleMeshShape*>& GetArenaCollisionShapes(GameMode gameMode);
+
 	// CUDA acceleration interface
 	bool InitCuda();
 	bool IsCudaEnabled();

@@ -99,6 +99,22 @@ struct GpuBallState {
     float restitution;
     float maxSpeed;
     
+    // Heatseeker mode info
+    struct HeatseekerInfo {
+        float yTargetDir;        // Which net the ball should seek (0=none, -1=blue, 1=orange)
+        float curTargetSpeed;    // Current homing speed
+        float timeSinceHit;      // Time since last hit
+    } hsInfo;
+    
+    // Dropshot mode info
+    struct DropshotInfo {
+        int chargeLevel;         // Damage radius level (1-3)
+        float accumulatedHitForce; // Force accumulated for damage
+        float yTargetDir;        // Which side can be damaged (0=none, -1=blue, 1=orange)
+        bool hasDamaged;         // Whether tiles were damaged
+        uint64_t lastDamageTick; // Tick when last damage occurred
+    } dsInfo;
+    
     uint64_t tickCount;
 };
 
@@ -166,6 +182,52 @@ struct GpuCarState {
     
     // Flip state
     GpuVec3 flipRelTorque;
+    
+        // Additional state tracking
+        bool isSupersonic;
+        float supersonicTime;
+        float timeSinceBoosted;
+        float airTime;
+    
+        // Auto-flip state
+        bool isAutoFlipping;
+        float autoFlipTimer;
+        float autoFlipTorqueScale;
+    
+        // World contact info
+        struct {
+            bool hasContact;
+            GpuVec3 contactNormal;
+        } worldContact;
+    
+        // Car-to-car contact info
+        struct {
+            uint32_t otherCarID;
+            float cooldownTimer;
+        } carContact;
+    
+        // Demo state
+        float demoRespawnTimer;
+    
+        // Ball hit info
+        struct {
+            bool isValid;
+            uint64_t ticksSinceHit;
+            GpuVec3 ballPos;
+            float distFromBall;
+        } ballHitInfo;
+    
+        // Last controls (for derivatives/changes)
+        struct {
+            float throttle;
+            float steer;
+            float pitch;
+            float yaw;
+            float roll;
+            bool jump;
+            bool boost;
+            bool handbrake;
+        } lastControls;
     
     // Resources
     float boost_amount;
