@@ -521,6 +521,9 @@ void Arena::Step(int ticksToSimulate) {
 					 "CUDA must be initialized before creating arenas.");
 	}
 
+	if (ticksToSimulate <= 0)
+		return;
+
 	// Capture current controls for every car and queue them for each tick
 	// so Step() behaves identically to the old per-tick model.
 	std::unordered_map<uint32_t, CarControls> snapshot;
@@ -995,7 +998,6 @@ void Arena::_SyncStatesFromGPU() {
 
 	GpuBallState gpuBall = {};
 	CUDA_CHECK(cudaMemcpyAsync(&gpuBall, _gpuBall, sizeof(GpuBallState), cudaMemcpyDeviceToHost, stream));
-	CUDA_CHECK(cudaStreamSynchronize(stream));
 
 	std::vector<GpuCarState> gpuCarsHost;
 	if (numCars > 0) {
@@ -1007,8 +1009,9 @@ void Arena::_SyncStatesFromGPU() {
 			cudaMemcpyDeviceToHost,
 			stream
 		));
-		CUDA_CHECK(cudaStreamSynchronize(stream));
 	}
+
+	CUDA_CHECK(cudaStreamSynchronize(stream));
 
 	auto isFiniteGpuVec = [](const GpuVec3& v) {
 		return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
