@@ -156,6 +156,7 @@ public:
 	void _StepGPU(int ticksToSimulate);
 
 private:
+	mutable std::recursive_mutex _arenaMutex;
 	
 	// Constructor for use by Arena::Create()
 	Arena(GameMode gameMode, const ArenaConfig& config, float tickRate = 120);

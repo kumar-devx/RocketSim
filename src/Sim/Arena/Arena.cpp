@@ -15,6 +15,8 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
 }
 
 Car* Arena::AddCar(Team team, const CarConfig& config) {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+
 	Car* car = Car::_AllocateCar();
 	
 	car->config = config;
@@ -47,6 +49,8 @@ bool Arena::_AddCarFromPtr(Car* car) {
 }
 
 bool Arena::RemoveCar(uint32_t id) {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+
 	auto itr = _carIDMap.find(id);
 
 	if (itr != _carIDMap.end()) {
@@ -417,6 +421,8 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 }
 
 void Arena::Step(int ticksToSimulate) {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+
 	// GPU-ONLY MODE - No CPU fallback
 	if (!_useCuda) {
 		RS_ERR_CLOSE("Arena::Step() - GPU acceleration required but not available! "
@@ -598,6 +604,7 @@ bool Arena::IsBallScored() const {
 }
 
 Arena::~Arena() {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
 
 	// Remove all cars
 	if (ownsCars) {
@@ -624,6 +631,8 @@ Arena::~Arena() {
 // GPU acceleration implementation
 
 void Arena::_InitCudaBuffers() {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+
 	auto* cudaEngine = RocketSim::GetCudaEngine();
 	if (!cudaEngine) {
 		RS_ERR_CLOSE("CUDA engine not initialized! Call RocketSim::InitCuda() before creating arenas.");
@@ -720,6 +729,8 @@ void Arena::_InitCudaBuffers() {
 }
 
 void Arena::_CleanupCudaBuffers() {
+	std::lock_guard<std::recursive_mutex> lock(_arenaMutex);
+
 	if (!_useCuda) return;
 
 	auto* cudaEngine = RocketSim::GetCudaEngine();
@@ -752,58 +763,68 @@ void Arena::_CleanupCudaBuffers() {
 
 void Arena::_SyncStatesToGPU() {
 	if (!_useCuda || !_gpuBall || !_gpuCars) return;
+
+	auto* cudaEngine = RocketSim::GetCudaEngine();
+	if (!cudaEngine || !cudaEngine->IsEnabled()) {
+		RS_ERR_CLOSE("CUDA engine not available during _SyncStatesToGPU()");
+	}
+
+	const int numCars = static_cast<int>(_cars.size());
+	if (numCars > _gpuCarsCapacity) {
+		// Ensure no in-flight kernels are accessing the old car buffer before reallocation.
+		cudaEngine->Synchronize();
+
+		auto& memMgr = cudaEngine->GetMemoryManager();
+		memMgr.Free(_gpuCars);
+		_gpuCars = nullptr;
+		_gpuCarsCapacity = RS_MAX(numCars * 2, 8);
+		_gpuCars = memMgr.AllocateUnified<GpuCarState>(_gpuCarsCapacity);
+
+		if (!_gpuCars) {
+			RS_ERR_CLOSE("Failed to reallocate GPU memory for cars! GPU memory exhausted.");
+		}
+	}
 	
 	// Sync ball state
 	BallState ballState = ball->_internalState;
-	_gpuBall->pos = ToGpuVec3(ballState.pos);
-	_gpuBall->vel = ToGpuVec3(ballState.vel);
-	_gpuBall->angVel = ToGpuVec3(ballState.angVel);
-	_gpuBall->rotMat = ToGpuMat3x3(ballState.rotMat);
-	_gpuBall->radius = _mutatorConfig.ballRadius;
-	_gpuBall->mass = _mutatorConfig.ballMass;
-	_gpuBall->drag = _mutatorConfig.ballDrag;
-	_gpuBall->friction = _mutatorConfig.ballWorldFriction;
-	_gpuBall->restitution = _mutatorConfig.ballWorldRestitution;
-	_gpuBall->maxSpeed = _mutatorConfig.ballMaxSpeed;
-	_gpuBall->tickCount = tickCount;
+	GpuBallState gpuBall = {};
+	gpuBall.pos = ToGpuVec3(ballState.pos);
+	gpuBall.vel = ToGpuVec3(ballState.vel);
+	gpuBall.angVel = ToGpuVec3(ballState.angVel);
+	gpuBall.rotMat = ToGpuMat3x3(ballState.rotMat);
+	gpuBall.radius = _mutatorConfig.ballRadius;
+	gpuBall.mass = _mutatorConfig.ballMass;
+	gpuBall.drag = _mutatorConfig.ballDrag;
+	gpuBall.friction = _mutatorConfig.ballWorldFriction;
+	gpuBall.restitution = _mutatorConfig.ballWorldRestitution;
+	gpuBall.maxSpeed = _mutatorConfig.ballMaxSpeed;
+	gpuBall.tickCount = tickCount;
 	
 	// Sync heatseeker info
-	_gpuBall->hsInfo.yTargetDir = ballState.hsInfo.yTargetDir;
-	_gpuBall->hsInfo.curTargetSpeed = ballState.hsInfo.curTargetSpeed;
-	_gpuBall->hsInfo.timeSinceHit = ballState.hsInfo.timeSinceHit;
+	gpuBall.hsInfo.yTargetDir = ballState.hsInfo.yTargetDir;
+	gpuBall.hsInfo.curTargetSpeed = ballState.hsInfo.curTargetSpeed;
+	gpuBall.hsInfo.timeSinceHit = ballState.hsInfo.timeSinceHit;
 	
 	// Sync dropshot info
-	_gpuBall->dsInfo.chargeLevel = ballState.dsInfo.chargeLevel;
-	_gpuBall->dsInfo.accumulatedHitForce = ballState.dsInfo.accumulatedHitForce;
-	_gpuBall->dsInfo.yTargetDir = ballState.dsInfo.yTargetDir;
-	_gpuBall->dsInfo.hasDamaged = ballState.dsInfo.hasDamaged;
-	_gpuBall->dsInfo.lastDamageTick = ballState.dsInfo.lastDamageTick;
+	gpuBall.dsInfo.chargeLevel = ballState.dsInfo.chargeLevel;
+	gpuBall.dsInfo.accumulatedHitForce = ballState.dsInfo.accumulatedHitForce;
+	gpuBall.dsInfo.yTargetDir = ballState.dsInfo.yTargetDir;
+	gpuBall.dsInfo.hasDamaged = ballState.dsInfo.hasDamaged;
+	gpuBall.dsInfo.lastDamageTick = ballState.dsInfo.lastDamageTick;
+
+	CUDA_CHECK(cudaMemcpy(_gpuBall, &gpuBall, sizeof(GpuBallState), cudaMemcpyHostToDevice));
 	
 	// Sync car states
+	std::vector<GpuCarState> gpuCarsHost;
+	gpuCarsHost.resize(numCars);
+
 	int carIdx = 0;
 	for (Car* car : _cars) {
-		if (carIdx >= _gpuCarsCapacity) {
-			// Reallocate if we have more cars than capacity
-			auto* cudaEngine = RocketSim::GetCudaEngine();
+		if (carIdx >= numCars)
+			break;
 
-			// CRITICAL: Synchronize before freeing to avoid in-page errors
-			cudaEngine->Synchronize();
-
-			auto& memMgr = cudaEngine->GetMemoryManager();
-
-			memMgr.Free(_gpuCars);
-			_gpuCars = nullptr;
-			_gpuCarsCapacity = _cars.size() * 2;
-			_gpuCars = memMgr.AllocateUnified<GpuCarState>(_gpuCarsCapacity);
-			
-			// CRITICAL: Check if reallocation succeeded
-			if (!_gpuCars) {
-				RS_ERR_CLOSE("Failed to reallocate GPU memory for cars! GPU memory exhausted.");
-			}
-		}
-		
 		CarState carState = car->_internalState;
-		GpuCarState& gpuCar = _gpuCars[carIdx];
+		GpuCarState& gpuCar = gpuCarsHost[carIdx];
 		gpuCar = {};
 		
 		gpuCar.pos = ToGpuVec3(carState.pos);
@@ -885,10 +906,38 @@ void Arena::_SyncStatesToGPU() {
 		
 		carIdx++;
 	}
+
+	if (numCars > 0) {
+		CUDA_CHECK(cudaMemcpy(
+			_gpuCars,
+			gpuCarsHost.data(),
+			size_t(numCars) * sizeof(GpuCarState),
+			cudaMemcpyHostToDevice
+		));
+	}
 }
 
 void Arena::_SyncStatesFromGPU() {
 	if (!_useCuda || !_gpuBall || !_gpuCars) return;
+
+	const int numCars = static_cast<int>(_cars.size());
+	if (numCars > _gpuCarsCapacity) {
+		RS_ERR_CLOSE("GPU car capacity mismatch in _SyncStatesFromGPU! This should never happen.");
+	}
+
+	GpuBallState gpuBall = {};
+	CUDA_CHECK(cudaMemcpy(&gpuBall, _gpuBall, sizeof(GpuBallState), cudaMemcpyDeviceToHost));
+
+	std::vector<GpuCarState> gpuCarsHost;
+	if (numCars > 0) {
+		gpuCarsHost.resize(numCars);
+		CUDA_CHECK(cudaMemcpy(
+			gpuCarsHost.data(),
+			_gpuCars,
+			size_t(numCars) * sizeof(GpuCarState),
+			cudaMemcpyDeviceToHost
+		));
+	}
 
 	auto isFiniteGpuVec = [](const GpuVec3& v) {
 		return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
@@ -900,27 +949,27 @@ void Arena::_SyncStatesFromGPU() {
 	};
 	
 	// Sync ball state back
-	if (!isReasonableGpuVec(_gpuBall->pos) || !isReasonableGpuVec(_gpuBall->vel) || !isReasonableGpuVec(_gpuBall->angVel)) {
+	if (!isReasonableGpuVec(gpuBall.pos) || !isReasonableGpuVec(gpuBall.vel) || !isReasonableGpuVec(gpuBall.angVel)) {
 		RS_ERR_CLOSE("GPU produced invalid ball state (non-finite or out-of-range values)");
 	}
 
 	BallState ballState;
-	ballState.pos = FromGpuVec3(_gpuBall->pos);
-	ballState.vel = FromGpuVec3(_gpuBall->vel);
-	ballState.angVel = FromGpuVec3(_gpuBall->angVel);
-	ballState.rotMat = FromGpuMat3x3(_gpuBall->rotMat);
+	ballState.pos = FromGpuVec3(gpuBall.pos);
+	ballState.vel = FromGpuVec3(gpuBall.vel);
+	ballState.angVel = FromGpuVec3(gpuBall.angVel);
+	ballState.rotMat = FromGpuMat3x3(gpuBall.rotMat);
 	
 	// Sync heatseeker info back
-	ballState.hsInfo.yTargetDir = _gpuBall->hsInfo.yTargetDir;
-	ballState.hsInfo.curTargetSpeed = _gpuBall->hsInfo.curTargetSpeed;
-	ballState.hsInfo.timeSinceHit = _gpuBall->hsInfo.timeSinceHit;
+	ballState.hsInfo.yTargetDir = gpuBall.hsInfo.yTargetDir;
+	ballState.hsInfo.curTargetSpeed = gpuBall.hsInfo.curTargetSpeed;
+	ballState.hsInfo.timeSinceHit = gpuBall.hsInfo.timeSinceHit;
 	
 	// Sync dropshot info back
-	ballState.dsInfo.chargeLevel = _gpuBall->dsInfo.chargeLevel;
-	ballState.dsInfo.accumulatedHitForce = _gpuBall->dsInfo.accumulatedHitForce;
-	ballState.dsInfo.yTargetDir = _gpuBall->dsInfo.yTargetDir;
-	ballState.dsInfo.hasDamaged = _gpuBall->dsInfo.hasDamaged;
-	ballState.dsInfo.lastDamageTick = _gpuBall->dsInfo.lastDamageTick;
+	ballState.dsInfo.chargeLevel = gpuBall.dsInfo.chargeLevel;
+	ballState.dsInfo.accumulatedHitForce = gpuBall.dsInfo.accumulatedHitForce;
+	ballState.dsInfo.yTargetDir = gpuBall.dsInfo.yTargetDir;
+	ballState.dsInfo.hasDamaged = gpuBall.dsInfo.hasDamaged;
+	ballState.dsInfo.lastDamageTick = gpuBall.dsInfo.lastDamageTick;
 	
 	ball->_internalState = ballState;
 	ball->_internalState.tickCountSinceUpdate = 0;
@@ -928,12 +977,11 @@ void Arena::_SyncStatesFromGPU() {
 	// Sync car states back
 	int carIdx = 0;
 	for (Car* car : _cars) {
-		// Safety check: ensure we don't go out of bounds
-		if (carIdx >= _gpuCarsCapacity) {
-			RS_ERR_CLOSE("GPU car capacity mismatch in _SyncStatesFromGPU! This should never happen.");
+		if (carIdx >= numCars) {
+			break;
 		}
 		
-		const GpuCarState& gpuCar = _gpuCars[carIdx];
+		const GpuCarState& gpuCar = gpuCarsHost[carIdx];
 
 		if (!isReasonableGpuVec(gpuCar.pos) || !isReasonableGpuVec(gpuCar.vel) || !isReasonableGpuVec(gpuCar.angVel)) {
 			RS_ERR_CLOSE("GPU produced invalid car state (non-finite or out-of-range values) for car id " << car->id);
