@@ -6,7 +6,99 @@
 #include "../Cuda/GpuMeshCollision.h"
 #include "DropshotTiles/DropshotTiles.h"
 
+#include <map>
+
 RS_NS_START
+
+namespace {
+	std::mutex g_gpuArenaCollisionCacheMutex;
+	std::map<GameMode, GpuArenaCollisionData*> g_gpuArenaCollisionCache;
+
+	GpuArenaCollisionData* GetOrCreateCachedArenaCollisionData(GameMode gameMode, CudaEngine* cudaEngine) {
+		std::lock_guard<std::mutex> lock(g_gpuArenaCollisionCacheMutex);
+
+		auto cacheIt = g_gpuArenaCollisionCache.find(gameMode);
+		if (cacheIt != g_gpuArenaCollisionCache.end()) {
+			return cacheIt->second;
+		}
+
+		const auto& collisionMeshes = RocketSim::GetArenaCollisionMeshes(gameMode);
+		if (collisionMeshes.empty()) {
+			g_gpuArenaCollisionCache[gameMode] = nullptr;
+			return nullptr;
+		}
+
+		std::vector<CpuBvhBuilder::Triangle> allTriangles;
+		for (const auto& meshFile : collisionMeshes) {
+			for (const auto& triIdx : meshFile.tris) {
+				const auto& v0 = meshFile.vertices[triIdx.vertexIndexes[0]];
+				const auto& v1 = meshFile.vertices[triIdx.vertexIndexes[1]];
+				const auto& v2 = meshFile.vertices[triIdx.vertexIndexes[2]];
+
+				CpuBvhBuilder::Triangle tri;
+				tri.v0 = { v0.x, v0.y, v0.z };
+				tri.v1 = { v1.x, v1.y, v1.z };
+				tri.v2 = { v2.x, v2.y, v2.z };
+
+				GpuVec3 e1 = {
+					tri.v1.x - tri.v0.x,
+					tri.v1.y - tri.v0.y,
+					tri.v1.z - tri.v0.z
+				};
+				GpuVec3 e2 = {
+					tri.v2.x - tri.v0.x,
+					tri.v2.y - tri.v0.y,
+					tri.v2.z - tri.v0.z
+				};
+
+				tri.normal = {
+					e1.y * e2.z - e1.z * e2.y,
+					e1.z * e2.x - e1.x * e2.z,
+					e1.x * e2.y - e1.y * e2.x
+				};
+
+				float len = sqrtf(tri.normal.x * tri.normal.x +
+					tri.normal.y * tri.normal.y +
+					tri.normal.z * tri.normal.z);
+				if (len > 1e-6f) {
+					tri.normal.x /= len;
+					tri.normal.y /= len;
+					tri.normal.z /= len;
+				}
+				tri.padding = 0;
+
+				allTriangles.push_back(tri);
+			}
+		}
+
+		if (allTriangles.empty()) {
+			g_gpuArenaCollisionCache[gameMode] = nullptr;
+			return nullptr;
+		}
+
+		cudaEngine->MakeContextCurrent();
+
+		GpuArenaCollisionData* cacheData = new GpuArenaCollisionData();
+		cacheData->triangles = nullptr;
+		cacheData->triangleCount = 0;
+		cacheData->bvhNodes = nullptr;
+		cacheData->bvhNodeCount = 0;
+		cacheData->meshes = nullptr;
+		cacheData->numMeshes = 0;
+
+		auto stream = cudaEngine->GetStream();
+		LoadArenaCollisionMeshesFromTriangles(allTriangles, cacheData, stream);
+
+		if (!cacheData->triangles || !cacheData->bvhNodes) {
+			UnloadArenaCollisionMeshes(cacheData);
+			delete cacheData;
+			return nullptr;
+		}
+
+		g_gpuArenaCollisionCache[gameMode] = cacheData;
+		return cacheData;
+	}
+}
 
 void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
 
@@ -632,7 +724,7 @@ Arena::~Arena() {
 
 void Arena::_InitCudaBuffers() {
 	// Constructor only - no lock needed (unique ownership during init)
-	if (!_useCuda) return;
+	if (_useCuda) return;
 
 	auto* cudaEngine = RocketSim::GetCudaEngine();
 	if (!cudaEngine) {
@@ -664,60 +756,9 @@ void Arena::_InitCudaBuffers() {
 	// Initial sync to GPU
 	_SyncStatesToGPU();
 
-	// Phase 2: Load collision meshes to GPU
-	// Build triangles directly from parsed collision mesh files.
+	// Phase 2: Reuse immutable arena collision data per game mode.
 	try {
-		std::vector<CpuBvhBuilder::Triangle> allTriangles;
-
-		const auto& collisionMeshes = RocketSim::GetArenaCollisionMeshes(gameMode);
-		for (const auto& meshFile : collisionMeshes) {
-			for (const auto& triIdx : meshFile.tris) {
-				const auto& v0 = meshFile.vertices[triIdx.vertexIndexes[0]];
-				const auto& v1 = meshFile.vertices[triIdx.vertexIndexes[1]];
-				const auto& v2 = meshFile.vertices[triIdx.vertexIndexes[2]];
-
-				CpuBvhBuilder::Triangle tri;
-				tri.v0 = { v0.x, v0.y, v0.z };
-				tri.v1 = { v1.x, v1.y, v1.z };
-				tri.v2 = { v2.x, v2.y, v2.z };
-
-				GpuVec3 e1 = {
-					tri.v1.x - tri.v0.x,
-					tri.v1.y - tri.v0.y,
-					tri.v1.z - tri.v0.z
-				};
-				GpuVec3 e2 = {
-					tri.v2.x - tri.v0.x,
-					tri.v2.y - tri.v0.y,
-					tri.v2.z - tri.v0.z
-				};
-
-				tri.normal = {
-					e1.y * e2.z - e1.z * e2.y,
-					e1.z * e2.x - e1.x * e2.z,
-					e1.x * e2.y - e1.y * e2.x
-				};
-
-				float len = sqrtf(tri.normal.x * tri.normal.x +
-					tri.normal.y * tri.normal.y +
-					tri.normal.z * tri.normal.z);
-				if (len > 1e-6f) {
-					tri.normal.x /= len;
-					tri.normal.y /= len;
-					tri.normal.z /= len;
-				}
-				tri.padding = 0;
-
-				allTriangles.push_back(tri);
-			}
-		}
-		
-		// Load triangles to GPU
-		if (!allTriangles.empty()) {
-			_gpuArenaCollision = new GpuArenaCollisionData();
-			auto gpuStream = cudaEngine->GetStream();
-			LoadArenaCollisionMeshesFromTriangles(allTriangles, _gpuArenaCollision, gpuStream);
-		}
+		_gpuArenaCollision = GetOrCreateCachedArenaCollisionData(gameMode, cudaEngine);
 	} catch (const std::exception& e) {
 		// Non-critical error - GPU collision just won't be available
 		RS_WARN("Failed to load arena collision meshes to GPU: " << e.what());
@@ -751,12 +792,8 @@ void Arena::_CleanupCudaBuffers() {
 		_gpuCarsCapacity = 0;
 	}
 
-	// Phase 2: Clean up GPU mesh collision data
-	if (_gpuArenaCollision) {
-		UnloadArenaCollisionMeshes(_gpuArenaCollision);
-		delete _gpuArenaCollision;
-		_gpuArenaCollision = nullptr;
-	}
+	// Arena collision data is immutable and shared across arenas for the process lifetime.
+	_gpuArenaCollision = nullptr;
 
 	_useCuda = false;
 }
