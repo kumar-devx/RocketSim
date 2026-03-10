@@ -867,9 +867,11 @@ void Arena::_SyncStatesToGPU() {
 		
 		// Ball hit info
 		gpuCar.ballHitInfo.isValid = carState.ballHitInfo.isValid;
-		gpuCar.ballHitInfo.ticksSinceHit = carState.ballHitInfo.ticksSinceHit;
+		gpuCar.ballHitInfo.relativePosOnBall = ToGpuVec3(carState.ballHitInfo.relativePosOnBall);
 		gpuCar.ballHitInfo.ballPos = ToGpuVec3(carState.ballHitInfo.ballPos);
-		gpuCar.ballHitInfo.distFromBall = carState.ballHitInfo.distFromBall;
+		gpuCar.ballHitInfo.extraHitVel = ToGpuVec3(carState.ballHitInfo.extraHitVel);
+		gpuCar.ballHitInfo.tickCountWhenHit = carState.ballHitInfo.tickCountWhenHit;
+		gpuCar.ballHitInfo.tickCountWhenExtraImpulseApplied = carState.ballHitInfo.tickCountWhenExtraImpulseApplied;
 		
 		// Last controls
 		gpuCar.lastControls.throttle = carState.lastControls.throttle;
@@ -988,9 +990,11 @@ void Arena::_SyncStatesFromGPU() {
 		
 		// Sync ball hit info
 		carState.ballHitInfo.isValid = gpuCar.ballHitInfo.isValid;
-		carState.ballHitInfo.ticksSinceHit = gpuCar.ballHitInfo.ticksSinceHit;
+		carState.ballHitInfo.relativePosOnBall = FromGpuVec3(gpuCar.ballHitInfo.relativePosOnBall);
 		carState.ballHitInfo.ballPos = FromGpuVec3(gpuCar.ballHitInfo.ballPos);
-		carState.ballHitInfo.distFromBall = gpuCar.ballHitInfo.distFromBall;
+		carState.ballHitInfo.extraHitVel = FromGpuVec3(gpuCar.ballHitInfo.extraHitVel);
+		carState.ballHitInfo.tickCountWhenHit = gpuCar.ballHitInfo.tickCountWhenHit;
+		carState.ballHitInfo.tickCountWhenExtraImpulseApplied = gpuCar.ballHitInfo.tickCountWhenExtraImpulseApplied;
 		
 		// Sync last controls
 		carState.lastControls.throttle = gpuCar.lastControls.throttle;

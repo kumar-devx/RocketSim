@@ -31,7 +31,6 @@
 #include <filesystem>
 #include <random>
 #include <mutex>
-#include <bit>
 #include <thread>
 #include <cstring>
 #include <array>
@@ -112,4 +111,7 @@ constexpr uint32_t __RS_GET_VERSION_ID() {
 }
 #define RS_VERSION_ID (__RS_GET_VERSION_ID())
 
-#define RS_IS_BIG_ENDIAN (std::endian::native == std::endian::big)
+#define RS_IS_BIG_ENDIAN ([]() { \
+	const uint16_t __rsEndianCheck = 0x0102; \
+	return *((const uint8_t*)&__rsEndianCheck) == 0x01; \
+}())

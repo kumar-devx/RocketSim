@@ -24,6 +24,8 @@ namespace GpuRLConst {
     __device__ __constant__ float BOOST_MAX = 100.0f;
     __device__ __constant__ float BOOST_USED_PER_SECOND = 33.333f;
     __device__ __constant__ float BOOST_MIN_TIME = 0.1f;
+    __device__ __constant__ float CAR_ACCEL_GROUND = 400.0f;
+    __device__ __constant__ float CAR_ACCEL_AIR = 66.667f;
     __device__ __constant__ float BOOST_ACCEL_GROUND = 991.667f;
     __device__ __constant__ float BOOST_ACCEL_AIR = 1058.333f;
     
@@ -66,6 +68,7 @@ namespace GpuRLConst {
     __device__ __constant__ float BALL_RESTITUTION = 0.6f;
     __device__ __constant__ float CAR_COLLISION_FRICTION = 0.3f;
     __device__ __constant__ float CAR_COLLISION_RESTITUTION = 0.1f;
+    __device__ __constant__ float CARCAR_COLLISION_RESTITUTION = 0.1f;
     __device__ __constant__ float CARBALL_COLLISION_FRICTION = 2.0f;
     __device__ __constant__ float CARBALL_COLLISION_RESTITUTION = 0.0f;
 }

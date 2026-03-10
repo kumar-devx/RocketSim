@@ -212,9 +212,11 @@ struct GpuCarState {
         // Ball hit info
         struct {
             bool isValid;
-            uint64_t ticksSinceHit;
+            GpuVec3 relativePosOnBall;
             GpuVec3 ballPos;
-            float distFromBall;
+            GpuVec3 extraHitVel;
+            uint64_t tickCountWhenHit;
+            uint64_t tickCountWhenExtraImpulseApplied;
         } ballHitInfo;
     
         // Last controls (for derivatives/changes)
@@ -257,23 +259,6 @@ inline Vec FromGpuVec3(const GpuVec3& v) {
     return Vec(v.x, v.y, v.z);
 }
 
-#ifndef __CUDACC__  // Bullet conversions only in C++ (not CUDA)
-inline GpuMat3x3 ToGpuMat3x3(const btMatrix3x3& m) {
-    GpuMat3x3 result;
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 3; j++)
-            result.m[i][j] = m[i][j];
-    return result;
-}
-
-inline btMatrix3x3 FromGpuMat3x3(const GpuMat3x3& m) {
-    btMatrix3x3 result;
-    for (int i = 0; i < 3; i++)
-        for (int j = 0; j < 3; j++)
-            result[i][j] = m.m[i][j];
-    return result;
-}
-#else  // CUDA versions using RotMat
 inline GpuMat3x3 ToGpuMat3x3(const RotMat& m) {
     GpuMat3x3 result;
     for (int i = 0; i < 3; i++)
@@ -289,6 +274,5 @@ inline RotMat FromGpuMat3x3(const GpuMat3x3& m) {
         Vec(m.m[0][2], m.m[1][2], m.m[2][2])
     );
 }
-#endif
 
 RS_NS_END

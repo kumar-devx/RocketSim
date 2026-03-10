@@ -60,7 +60,6 @@ void CudaMemoryManager::PrintDeviceInfo() {
         std::cout << "  Total Memory: " << (prop.totalGlobalMem / (1024 * 1024)) << " MB" << std::endl;
         std::cout << "  Max Threads Per Block: " << prop.maxThreadsPerBlock << std::endl;
         std::cout << "  Multiprocessors: " << prop.multiProcessorCount << std::endl;
-        std::cout << "  Clock Rate: " << (prop.clockRate / 1000) << " MHz" << std::endl;
     }
     std::cout << "===============================" << std::endl;
 }
