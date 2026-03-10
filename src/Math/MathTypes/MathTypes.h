@@ -19,6 +19,10 @@ protected:
 	constexpr Vec(float x, float y, float z, float w) : x(x), y(y), z(z), _w(w) {}
 public:
 
+	Vec(const btVector3& bulletVec) {
+		*(btVector3*)this = bulletVec;
+	}
+
 	bool IsZero() const {
 		return (x == 0 && y == 0 && z == 0 && _w == 0);
 	}
@@ -104,6 +108,10 @@ public:
 		return ((float*)this)[index];
 	}
 
+	operator btVector3() const {
+		return *(btVector3*)(this);
+	}
+
 	Vec operator+(const Vec& other) const;
 	Vec operator-(const Vec& other) const;
 	Vec operator*(const Vec& other) const;
@@ -152,6 +160,9 @@ public:
 	}
 };
 
+// Vec needs to be equal in both size and structure layout to btVector3, because they are type-punned to and from
+static_assert(sizeof(Vec) == sizeof(btVector3), "RocketSim Vec size must match btVector3 size");
+
 // RocketSim 3x3 rotation matrix struct
 // NOTE: Column-major
 struct RS_ALIGN_16 RS_API RotMat {
@@ -162,6 +173,15 @@ struct RS_ALIGN_16 RS_API RotMat {
 	}
 
 	RotMat(Vec forward, Vec right, Vec up) : forward(forward), right(right), up(up) {}
+
+	RotMat(const btMatrix3x3& bulletMat) {
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) {
+				// NOTE: btMatrix3x3 is row-major, whereas we are column-major
+				(*this)[i][j] = bulletMat[j][i];
+			}
+		}
+	}
 
 	static RotMat GetIdentity() {
 		return RotMat(
@@ -190,6 +210,17 @@ struct RS_ALIGN_16 RS_API RotMat {
 	Vec& operator[](uint32_t index) {
 		assert(index >= 0 && index < 3);
 		return ((Vec*)(this))[index];
+	}
+
+	operator btMatrix3x3() const {
+		btMatrix3x3 result;
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) {
+				// NOTE: btMatrix3x3 is row-major, whereas we are column-major
+				result[i][j] = (*this)[j][i];
+			}
+		}
+		return result;
 	}
 
 	RotMat operator+(const RotMat& other) const;

@@ -15,7 +15,6 @@ file(GLOB_RECURSE ROCKETSIM_SOURCES
     "src/*.cpp"
     "src/*.h"
     "src/Sim/Cuda/*.cu"
-    "src/Sim/Cuda/*.cuh"
 )
 
 # Create SHARED library (DLL) instead of STATIC
@@ -82,10 +81,8 @@ if(WIN32)
             COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
         )
         
-        # Add separate PDB flags for CUDA files (FIXED - no comma)
         target_compile_options(RocketSim PRIVATE
             $<$<COMPILE_LANGUAGE:CUDA>:
-                -Xcompiler=-Fd${CMAKE_CURRENT_BINARY_DIR}/${ROCKETSIM_PDB_NAME}.pdb
                 -Xcompiler=-FS
             >
         )

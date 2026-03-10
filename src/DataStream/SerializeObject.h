@@ -5,7 +5,7 @@ RS_NS_START
 
 struct SerializeObject {
 	void* ptr;
-	size_t size = -1;
+	size_t size = SIZE_MAX;
 
 	template<typename T>
 	SerializeObject(T& val) {

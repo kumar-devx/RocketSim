@@ -100,7 +100,7 @@ private:
 
 // Load collision meshes to GPU
 void LoadArenaCollisionMeshesToGpu(
-    const std::vector<class CollisionMeshFile>& meshFiles,
+    const std::vector<struct CollisionMeshFile>& meshFiles,
     GpuArenaCollisionData* outData,
     cudaStream_t stream
 );

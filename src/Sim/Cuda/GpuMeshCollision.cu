@@ -667,7 +667,6 @@ namespace VehicleConst {
     constexpr float DAMPING_COMPRESSION = 25.0f;         // Compression damping
     constexpr float DAMPING_RELAXATION = 40.0f;          // Expansion damping
     constexpr float BILATERAL_DAMPING = -0.2f;           // Friction damping
-    constexpr float ROLLING_FRICTION_SCALE = 113.73963f; // Rolling friction
 }
 
 // Bilateral constraint solver (from ViteLearn)
@@ -818,7 +817,6 @@ CUDA_KERNEL void WheelRaycastKernelImpl(
             wheel.suspensionRestLength = SUSPENSION_REST_LENGTH;
             
             // Calculate suspension length (distance traveled minus wheel radius)
-            float wheelTraceDist = closestT;
             GpuVec3 upDir = {-rayDir.x, -rayDir.y, -rayDir.z};
             GpuVec3 hardToContact = {
                 wheel.contactPoint.x - wheelPosWorld.x,

@@ -6,11 +6,13 @@
 #include <cmath>
 
 // Prefer real Bullet types when available.
-#if __has_include(<LinearMath/btQuaternion.h>) && __has_include(<LinearMath/btMatrix3x3.h>)
+#if __has_include(<LinearMath/btVector3.h>) && __has_include(<LinearMath/btQuaternion.h>) && __has_include(<LinearMath/btMatrix3x3.h>)
+#include <LinearMath/btVector3.h>
 #include <LinearMath/btQuaternion.h>
 #include <LinearMath/btMatrix3x3.h>
 
-#elif __has_include("LinearMath/btQuaternion.h") && __has_include("LinearMath/btMatrix3x3.h")
+#elif __has_include("LinearMath/btVector3.h") && __has_include("LinearMath/btQuaternion.h") && __has_include("LinearMath/btMatrix3x3.h")
+#include "LinearMath/btVector3.h"
 #include "LinearMath/btQuaternion.h"
 #include "LinearMath/btMatrix3x3.h"
 
@@ -19,6 +21,17 @@
 // Minimal compatibility subset for projects that only need btQuaternion/btMatrix3x3
 // conversion helpers but do not link Bullet directly.
 using btScalar = float;
+
+class btVector3 {
+public:
+	btScalar m[4];
+
+	btVector3() : m{0, 0, 0, 0} {}
+	btVector3(btScalar x, btScalar y, btScalar z) : m{x, y, z, 0} {}
+
+	btScalar& operator[](int index) { return m[index]; }
+	const btScalar& operator[](int index) const { return m[index]; }
+};
 
 class btQuaternion {
 public:

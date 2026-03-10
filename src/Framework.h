@@ -2,12 +2,6 @@
 
 #define RS_VERSION "2.2"
 
-// RocketSim-GPU is a CUDA-only target. Defining this here keeps editor
-// parsing (IntelliSense) aligned with the actual build configuration.
-#ifndef RS_CUDA_ENABLED
-#define RS_CUDA_ENABLED
-#endif
-
 #include <stdint.h>
 #include <iostream>
 #include <string>
@@ -41,7 +35,7 @@
 
 #ifdef _MSC_VER
 // Disable annoying truncation warnings on MSVC
-#pragma warning(disable: 4305 4244 4267)
+#pragma warning(disable: 4305 4244 4267 4251)
 #endif
 
 typedef uint8_t byte;
