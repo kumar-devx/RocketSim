@@ -34,10 +34,10 @@ float LinearPieceCurve::GetOutput(float input, float defaultOutput) const {
 	return output;
 }
 
-btVector3 Math::RoundVec(btVector3 vec, float precision) {
-	vec.x() = roundf(vec.x() / precision) * precision;
-	vec.y() = roundf(vec.y() / precision) * precision;
-	vec.z() = roundf(vec.z() / precision) * precision;
+Vec Math::RoundVec(Vec vec, float precision) {
+	vec.x = roundf(vec.x / precision) * precision;
+	vec.y = roundf(vec.y / precision) * precision;
+	vec.z = roundf(vec.z / precision) * precision;
 	return vec;
 }
 

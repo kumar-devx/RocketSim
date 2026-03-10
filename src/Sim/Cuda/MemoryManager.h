@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef RS_CUDA_ENABLED
-
 #include "GpuTypes.h"
 #include <vector>
 #include <memory>
@@ -155,5 +153,3 @@ private:
 };
 
 RS_NS_END
-
-#endif // RS_CUDA_ENABLED

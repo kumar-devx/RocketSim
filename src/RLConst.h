@@ -150,10 +150,8 @@ namespace RLConst {
 		CAR_AIR_CONTROL_TORQUE = Vec(130, 95, 400),
 		CAR_AIR_CONTROL_DAMPING = Vec(30, 20, 50);
 
-	// Rocket League uses BulletPhysics, so I'd imagine they use a variation of the btRaycastVehicle
-	// These are those vehicle's settings
+	// Vehicle dynamics settings
 	namespace BTVehicle {
-		// TODO: These values might change from car to car...? Need to check!
 		constexpr float
 			SUSPENSION_FORCE_SCALE_FRONT = 36.f - (1.f / 4.f),
 			SUSPENSION_FORCE_SCALE_BACK = 54.f + (1.f / 4.f) + (1.5f / 100.f),
@@ -161,7 +159,7 @@ namespace RLConst {
 			SUSPENSION_STIFFNESS = 500.f,
 			WHEELS_DAMPING_COMPRESSION = 25.f,
 			WHEELS_DAMPING_RELAXATION = 40.f,
-			MAX_SUSPENSION_TRAVEL = 12.f, // TODO: Are we sure this is the same for all cars?
+			MAX_SUSPENSION_TRAVEL = 12.f,
 			SUSPENSION_SUBTRACTION = 0.05f;
 	}
 
@@ -200,11 +198,6 @@ namespace RLConst {
 	}
 
 	namespace Dropshot {
-
-		// TODO: Some of these values are unconfirmed assumptions based on lots of testing,
-		// so there is a chance some of them are slightly off.
-		// TO CONFIRM:
-		//	MIN_ABSORBED_FORCE_FOR_CHARGE, MIN_ABSORBED_FORCE_FOR_SUPERCHARGE, MIN_DAMAGE_INTERVAL, BALL_LAUNCH_Z_VEL, BALL_LAUNCH_DELAY
 			
 		constexpr float BALL_LAUNCH_Z_VEL = 985.f;
 		constexpr float BALL_LAUNCH_DELAY = 0.26f;
@@ -224,7 +217,7 @@ namespace RLConst {
 		// Maximum of the relative AABB of the hexagon (2D) in UU
 		constexpr Vec TILE_HEXAGON_AABB_MAX = Vec(7.6643f, 8.85f, 0.f);
 
-		// Vertices of the hexagon in bullet units
+		// Vertices of the hexagon in simulation units (scaled via BT_TO_UU)
 		constexpr Vec TILE_HEXAGON_VERTS_BT[6] = {
 			{  0.0f,    -8.85f,  0.f},
 			{  7.6643f, -4.425f, 0.f},

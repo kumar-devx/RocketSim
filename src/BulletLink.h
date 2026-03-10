@@ -2,14 +2,6 @@
 
 // BulletLink.h: Includes most basic bullet headers, and defines some convenient typedefs/wrappers/etc.
 
-// Don't include Bullet headers when compiling CUDA code
-// CUDA's nvcc compiler doesn't support Bullet's custom operator new/delete
-#ifndef __CUDACC__
-// Bullet v3 (https://github.com/bulletphysics/bullet3)
-#include "../libsrc/bullet3-3.24/LinearMath/btVector3.h"
-#include "../libsrc/bullet3-3.24/LinearMath/btMatrix3x3.h"
-#endif
-
 #include <ostream>
 
 //  BulletPhysics Units (1m) to Unreal Units (2cm) conversion scale

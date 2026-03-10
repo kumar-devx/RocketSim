@@ -7,7 +7,6 @@
 RS_NS_START
 
 // Simplified collision detection for GPU
-// Full mesh collision will use Bullet on CPU for now
 
 // Ball-floor collision
 void LaunchBallFloorCollisionKernel(GpuBallState* balls, int numBalls, cudaStream_t stream = 0);

@@ -1,9 +1,7 @@
 #pragma once
 
-#ifdef RS_CUDA_ENABLED
-
 #include "../../BaseInc.h"
-#include <cuda_runtime.h>
+#include "CudaCompat.h"
 #include <stdexcept>
 
 RS_NS_START
@@ -113,12 +111,28 @@ struct GpuCarState {
     
     // Wheel info (4 wheels max)
     struct WheelData {
-        GpuVec3 connectionPoint;
-        float suspensionLength;
+        GpuVec3 connectionPoint;  // Connection point in car space
+        GpuVec3 wheelDirection;   // Down direction in world space
+        GpuVec3 wheelAxle;        // Axle direction in world space
+        float suspensionLength;   // Current suspension compression
+        float suspensionRestLength; // Rest length from config
+        float wheelRadius;        // Wheel radius from config
         bool hasContact;
         GpuVec3 contactNormal;
         GpuVec3 contactPoint;
+        GpuVec3 hardPoint;        // Suspension attachment point in world space
         float steerAngle;
+        
+        // Suspension physics (from ViteLearn)
+        float suspensionRelativeVelocity; // Suspension compression velocity
+        float clippedInvContactDotSuspension; // Inverse of normal dot suspension
+        float suspensionForce;    // Current suspension force magnitude
+        GpuVec3 velocityAtContact; // Velocity at contact point
+        bool isInContactWithWorld; // True if touching static geometry
+        
+        // Drive forces
+        float engineForce;
+        float brakeForce;
     } wheels[4];
     
     int numWheels; // 3 or 4
@@ -216,5 +230,3 @@ inline RotMat FromGpuMat3x3(const GpuMat3x3& m) {
 #endif
 
 RS_NS_END
-
-#endif // RS_CUDA_ENABLED

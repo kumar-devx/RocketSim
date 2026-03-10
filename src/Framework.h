@@ -2,6 +2,12 @@
 
 #define RS_VERSION "2.2"
 
+// RocketSim-GPU is a CUDA-only target. Defining this here keeps editor
+// parsing (IntelliSense) aligned with the actual build configuration.
+#ifndef RS_CUDA_ENABLED
+#define RS_CUDA_ENABLED
+#endif
+
 #include <stdint.h>
 #include <iostream>
 #include <string>

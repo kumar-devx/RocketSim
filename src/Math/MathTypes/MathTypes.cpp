@@ -60,21 +60,38 @@ MAT_OP_EACH_FLT(/)
 //////////////////////////////////////
 
 Angle Angle::FromRotMat(RotMat mat) {
-	Angle result;
+	Angle result = Angle::FromVec(mat.forward);
 
-	// TODO: Don't use btMatrix3x3
-	btMatrix3x3 bulletMat = mat;
-	bulletMat.getEulerYPR(result.yaw, result.pitch, result.roll);
-	result.pitch *= -1;
-	result.roll *= -1;
+	Vec baseUp = Vec(0, 0, 1);
+	if (fabsf(mat.forward.z) > 0.999f)
+		baseUp = Vec(0, 1, 0);
+
+	Vec baseRight = baseUp.Cross(mat.forward).Normalized();
+	Vec orthoUp = mat.forward.Cross(baseRight).Normalized();
+
+	float sinRoll = mat.right.Dot(orthoUp);
+	float cosRoll = mat.right.Dot(baseRight);
+	result.roll = atan2f(sinRoll, cosRoll);
+	result.NormalizeFix();
 	return result;
 }
 
 RotMat Angle::ToRotMat() const {
-	// TODO: Don't use btMatrix3x3
-	btMatrix3x3 mat;
-	mat.setEulerYPR(yaw, -pitch, -roll);
-	return mat;
+	Vec fwd = GetForwardVec();
+
+	Vec worldUp = Vec(0, 0, 1);
+	if (fabsf(fwd.z) > 0.999f)
+		worldUp = Vec(0, 1, 0);
+
+	Vec right = worldUp.Cross(fwd).Normalized();
+	Vec up = fwd.Cross(right).Normalized();
+
+	float c = cosf(roll);
+	float s = sinf(roll);
+	Vec rolledRight = (right * c) + (up * s);
+	Vec rolledUp = fwd.Cross(rolledRight).Normalized();
+
+	return RotMat(fwd, rolledRight, rolledUp);
 }
 
 Angle Angle::FromVec(const Vec& forward) {

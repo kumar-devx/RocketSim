@@ -223,7 +223,7 @@ CUDA_KERNEL void CarVelocityLimitKernel(GpuCarState* cars, int numCars) {
     
     if (car.isDemoed) return;
 
-    // Defensive sanitization to prevent invalid values from propagating into Bullet.
+    // Defensive sanitization for invalid numeric states.
     if (!isfinite(car.vel.x) || !isfinite(car.vel.y) || !isfinite(car.vel.z)) {
         car.vel = {0.0f, 0.0f, 0.0f};
     }
@@ -294,10 +294,7 @@ void LaunchCarVelocityLimitKernel(GpuCarState* cars, int numCars, cudaStream_t s
     CUDA_CHECK(cudaGetLastError());
 }
 
-// GPU Car-to-Car Collision Detection & Physics (Phase 2-3 Optimization)
-// This kernel computes collisions between all cars and applies impulses directly on GPU
-// Replaces CPU Bullet3 car-to-car collision processing for 3-4x speedup
-// Directly modifies car velocities (like BallCarCollisionKernel) for immediate effect
+// GPU car-to-car collision detection and impulse application.
 
 CUDA_KERNEL void CarToCarCollisionFullKernel(
     GpuCarState* cars,
@@ -340,8 +337,7 @@ CUDA_KERNEL void CarToCarCollisionFullKernel(
         // Skip if cars are moving apart
         if (velAlongNormal <= 0) continue;
         
-        // Calculate impulse (equal mass assumption for speed)
-        // Using restitution to match Bullet3 behavior
+        // Calculate impulse
         const float RESTITUTION = 0.4f;
         float impulseMagnitude = -(1.0f + RESTITUTION) * velAlongNormal / 2.0f;
         

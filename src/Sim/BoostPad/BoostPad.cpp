@@ -2,8 +2,6 @@
 
 #include "../../RLConst.h"
 
-#include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
-
 RS_NS_START
 
 void BoostPadConfig::Serialize(DataStreamOut& out) const {
@@ -62,14 +60,16 @@ void BoostPad::_PreTickUpdate(float tickTime) {
 void BoostPad::_CheckCollide(Car* car) {
 	using namespace RLConst::BoostPads;
 
-	Vec carPosBT = car->_rigidBody.getWorldTransform().m_origin;
+	Vec carPosBT = car->_internalState.pos * UU_TO_BT;
 
 	bool colliding = false;
 	if (_internalState.prevLockedCarID == car->id) {
 		// Check with AABB-hitbox collision
 
-		btVector3 carMinBT, carMaxBT;
-		car->_rigidBody.getAabb(carMinBT, carMaxBT);
+		Vec halfHitboxBT = (car->config.hitboxSize * 0.5f) * UU_TO_BT;
+		Vec hitboxCenterBT = (car->_internalState.pos + car->config.hitboxPosOffset) * UU_TO_BT;
+		Vec carMinBT = hitboxCenterBT - halfHitboxBT;
+		Vec carMaxBT = hitboxCenterBT + halfHitboxBT;
 
 		// TODO: Account for orientation
 		colliding = (_boxMaxBT > carMinBT) && (_boxMinBT < carMaxBT);

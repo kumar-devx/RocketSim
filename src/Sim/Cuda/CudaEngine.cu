@@ -1,6 +1,7 @@
 #ifdef RS_CUDA_ENABLED
 
 #include "CudaEngine.h"
+#include "GpuPhysicsPipeline.h"
 #include <iostream>
 
 RS_NS_START
@@ -157,6 +158,31 @@ void CudaEngine::Synchronize() {
     if (enabled_) {
         CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
+}
+
+void CudaEngine::UpdateArenaBatchFullPhysics(
+    GpuBallState* ball,
+    GpuCarState* cars,
+    int numCars,
+    float deltaTime,
+    const GpuArenaCollisionData* arenaCollision
+) {
+    if (!enabled_) return;
+    
+    // Launch the complete GPU physics pipeline
+    // This handles ALL physics and collisions without Bullet involvement
+    LaunchGpuFullPhysicsStep(
+        ball,
+        1,  // Always 1 ball per arena
+        cars,
+        numCars,
+        deltaTime,
+        nullptr,  // collision grid - nullptr for now (using simplified collision)
+        arenaCollision,  // Phase 2: Mesh collision data
+        stream_
+    );
+    
+    CUDA_CHECK(cudaGetLastError());
 }
 
 RS_NS_END

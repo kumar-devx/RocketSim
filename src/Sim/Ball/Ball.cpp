@@ -2,9 +2,6 @@
 
 #include "../../RLConst.h"
 #include "../Car/Car.h"
-
-#include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btConvexHullShape.h"
 #include "../CollisionMasks.h"
 
 RS_NS_START
@@ -25,137 +22,50 @@ void BallState::Deserialize(DataStreamIn& in) {
 }
 
 BallState Ball::GetState() {
-	_internalState.pos = _rigidBody.getWorldTransform().getOrigin() * BT_TO_UU;
-	_internalState.rotMat = _rigidBody.getWorldTransform().getBasis();
-	_internalState.vel = _rigidBody.getLinearVelocity() * BT_TO_UU;
-	_internalState.angVel = _rigidBody.getAngularVelocity();
 	return _internalState;
+}
+
+void Ball::_SetPhysicsProps(const MutatorConfig& mutatorConfig) {
+	_radiusBT = mutatorConfig.ballRadius * UU_TO_BT;
+	_mass = mutatorConfig.ballMass;
 }
 
 void Ball::SetState(const BallState& state) {
 
 	_internalState = state;
 
-	btTransform newTransform;
-	newTransform.setOrigin(state.pos * UU_TO_BT);
-	newTransform.setBasis(state.rotMat);
-	_rigidBody.setWorldTransform(newTransform);
-	_rigidBody.setLinearVelocity(state.vel * UU_TO_BT);
-	_rigidBody.setAngularVelocity(state.angVel);
-	_rigidBody.updateInertiaTensor();
-	if (!state.vel.IsZero() || !state.angVel.IsZero())
-		_rigidBody.setActivationState(ACTIVE_TAG);
-
 	_velocityImpulseCache = { 0,0,0 };
 	_internalState.tickCountSinceUpdate = 0;
-}
-
-btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig& mutatorConfig, btVector3& localIntertia) {
-	
-	if (gameMode == GameMode::SNOWDAY) {
-		using namespace RLConst;
-
-		auto shape = new btConvexHullShape();
-		
-		float angStep = (M_PI * 2) / Snowday::PUCK_CIRCLE_POINT_AMOUNT;
-		float curAng = 0;
-		for (int i = 0; i < Snowday::PUCK_CIRCLE_POINT_AMOUNT; i++) {
-			Vec point = Vec(
-				cosf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
-				sinf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
-				Snowday::PUCK_HEIGHT / 2 * UU_TO_BT
-			);
-
-			shape->addPoint(point, false);
-			point.z *= -1;
-			shape->addPoint(point, true);
-
-			curAng += angStep;
-		}
-		shape->recalcLocalAabb();
-		shape->calculateLocalInertia(mutatorConfig.ballMass, localIntertia);
-		return shape;
-	} else {
-		auto shape = new btSphereShape(mutatorConfig.ballRadius * UU_TO_BT);
-		shape->calculateLocalInertia(mutatorConfig.ballMass, localIntertia);
-		return shape;
-	}
-}
-
-void Ball::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig, bool noRot) {
-	btVector3 localIneria;
-	_collisionShape = MakeBallCollisionShape(gameMode, mutatorConfig, localIneria);
-
-	btRigidBody::btRigidBodyConstructionInfo constructionInfo =
-		btRigidBody::btRigidBodyConstructionInfo(mutatorConfig.ballMass, NULL, _collisionShape);
-
-	constructionInfo.m_startWorldTransform.setIdentity();
-	constructionInfo.m_startWorldTransform.setOrigin(btVector3(0, 0, mutatorConfig.ballRadius * UU_TO_BT));
-
-	constructionInfo.m_localInertia = localIneria;
-	constructionInfo.m_linearDamping = mutatorConfig.ballDrag;
-	constructionInfo.m_friction = mutatorConfig.ballWorldFriction;
-	constructionInfo.m_restitution = mutatorConfig.ballWorldRestitution;
-
-	_rigidBody = btRigidBody(constructionInfo);
-	_rigidBody.setUserIndex(BT_USERINFO_TYPE_BALL);
-	_rigidBody.setUserPointer(this);
-
-	// Trigger the Arena::_BulletContactAddedCallback() when anything touches the ball
-	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;
-
-	_rigidBody.m_rigidbodyFlags = 0;
-
-	_rigidBody.m_noRot = noRot && (_collisionShape->getShapeType() == SPHERE_SHAPE_PROXYTYPE);
-
-	bulletWorld->addRigidBody(
-		&_rigidBody,
-		btBroadphaseProxy::DefaultFilter | CollisionMasks::HOOPS_NET | CollisionMasks::DROPSHOT_TILE, btBroadphaseProxy::AllFilter
-	);
 }
 
 void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 	using namespace RLConst;
 
-	// Add velocity cache
 	if (!_velocityImpulseCache.IsZero()) {
-		_rigidBody.m_linearVelocity += _velocityImpulseCache;
-		_velocityImpulseCache = { 0,0,0 };
+		_internalState.vel += _velocityImpulseCache;
+		_velocityImpulseCache = { 0, 0, 0 };
 	}
 
-	{ // Limit velocities
-		btVector3
-			vel = _rigidBody.m_linearVelocity,
-			angVel = _rigidBody.m_angularVelocity;
+	float ballMaxSpeed = mutatorConfig.ballMaxSpeed;
+	if (_internalState.vel.LengthSq() > ballMaxSpeed * ballMaxSpeed)
+		_internalState.vel = _internalState.vel.Normalized() * ballMaxSpeed;
 
-		float ballMaxSpeedBT = mutatorConfig.ballMaxSpeed * UU_TO_BT;
-		if (vel.length2() > ballMaxSpeedBT * ballMaxSpeedBT)
-			vel = vel.normalized() * ballMaxSpeedBT;
-
-		if (angVel.length2() > (BALL_MAX_ANG_SPEED * BALL_MAX_ANG_SPEED))
-			angVel = angVel.normalized() * BALL_MAX_ANG_SPEED;
-
-		_rigidBody.m_linearVelocity = vel;
-		_rigidBody.m_angularVelocity = angVel;
-	}
+	if (_internalState.angVel.LengthSq() > (BALL_MAX_ANG_SPEED * BALL_MAX_ANG_SPEED))
+		_internalState.angVel = _internalState.angVel.Normalized() * BALL_MAX_ANG_SPEED;
 
 	_internalState.tickCountSinceUpdate++;
 }
 
 bool Ball::IsSphere() const {
-	return dynamic_cast<btSphereShape*>(_collisionShape);
+	return true;
 }
 
 float Ball::GetRadiusBullet() const {
-	if (IsSphere()) {
-		return ((btSphereShape*)_collisionShape)->getRadius();
-	} else {
-		return 0;
-	}
+	return _radiusBT;
 }
 
 float Ball::GetMass() const {
-	return _rigidBody.getMass();
+	return _mass;
 }
 
 void Ball::_PreTickUpdate(GameMode gameMode, float tickTime) {
@@ -200,7 +110,7 @@ void Ball::_PreTickUpdate(GameMode gameMode, float tickTime) {
 			Vec newDir = newAngle.GetForwardVec();
 
 			Vec newVel = newDir * newSpeed;
-			_rigidBody.m_linearVelocity = newVel * UU_TO_BT;
+			_internalState.vel = newVel;
 
 			_internalState.hsInfo.timeSinceHit += tickTime;
 		}
@@ -226,8 +136,7 @@ void Ball::_PreTickUpdate(GameMode gameMode, float tickTime) {
 
 				// Apply the force
 				float launchVelZ = isDropshot ? RLConst::Dropshot::BALL_LAUNCH_Z_VEL : RLConst::BALL_HOOPS_LAUNCH_Z_VEL;
-				_rigidBody.applyCentralImpulse(Vec(0, 0, launchVelZ) * GetMass() * UU_TO_BT);
-				_rigidBody.setActivationState(ACTIVE_TAG);
+				_internalState.vel.z += launchVelZ;
 			}
 		}
 
@@ -281,7 +190,7 @@ void Ball::_OnHit(
 			ballHitInfo.extraHitVel = addedVel;
 
 			// Velocity won't be actually added until the end of this tick
-			_velocityImpulseCache += addedVel * UU_TO_BT;
+			_velocityImpulseCache += addedVel;
 		}
 	} else {
 		// Don't do multiple extra impulses in a row
@@ -328,7 +237,7 @@ void Ball::_OnWorldCollision(GameMode gameMode, Vec normal, float tickTime) {
 
 	if (gameMode == GameMode::HEATSEEKER) {
 		if (_internalState.hsInfo.yTargetDir != 0 ) {
-			Vec pos = _rigidBody.getWorldTransform().getOrigin() * BT_TO_UU;
+			Vec pos = _internalState.pos;
 			float relNormalY = normal.y * _internalState.hsInfo.yTargetDir;
 			float relY = pos.y * _internalState.hsInfo.yTargetDir;
 			if (relNormalY <= -Heatseeker::WALL_BOUNCE_CHANGE_Y_NORMAL && 
@@ -337,8 +246,7 @@ void Ball::_OnWorldCollision(GameMode gameMode, Vec normal, float tickTime) {
 				// We hit far enough to change direction
 				_internalState.hsInfo.yTargetDir *= -1;
 
-				Vec pos = _rigidBody.getWorldTransform().getOrigin() * BT_TO_UU;
-				Vec vel = _rigidBody.m_linearVelocity * BT_TO_UU;
+				Vec vel = _internalState.vel;
 
 				// TODO: Make this a member function
 				Vec goalTargetPos = Vec(0, Heatseeker::TARGET_Y * _internalState.hsInfo.yTargetDir, Heatseeker::TARGET_Z);
@@ -350,62 +258,15 @@ void Ball::_OnWorldCollision(GameMode gameMode, Vec normal, float tickTime) {
 					dirToGoal * (1 - Heatseeker::WALL_BOUNCE_UP_FRAC) +
 					Vec(0, 0, 1) * Heatseeker::WALL_BOUNCE_UP_FRAC;
 				Vec bounceImpulse = bounceDir * vel.Length() * Heatseeker::WALL_BOUNCE_FORCE_SCALE;
-				_velocityImpulseCache += bounceImpulse * UU_TO_BT;
+				_velocityImpulseCache += bounceImpulse;
 			}
 		}
 	} else if (gameMode == GameMode::SNOWDAY) {
 		if (!_groundStickApplied) {
-			_rigidBody.applyCentralForce(-normal * Snowday::PUCK_GROUND_STICK_FORCE);
+			_internalState.vel += (-normal * (Snowday::PUCK_GROUND_STICK_FORCE * BT_TO_UU * tickTime));
 			_groundStickApplied = true;
 		}
 	}
-}
-
-bool Ball::_OnDropshotTileCollision(
-	DropshotTilesState& tilesState, int tileTotalIndex, const btCollisionObject* tileObj,
-	uint64_t tickCount, float tickTime
-) {
-	int teamIdx = tileTotalIndex / RLConst::Dropshot::NUM_TILES_PER_TEAM;
-	int tileIdx = tileTotalIndex % RLConst::Dropshot::NUM_TILES_PER_TEAM;
-	auto& tileState = tilesState.states[teamIdx][tileIdx];
-	Vec tilePos = DropshotTiles::GetTilePos(teamIdx, tileIdx);
-	auto& dsInfo = _internalState.dsInfo;
-
-	// This should be possible in rare circumstances where two tiles are hit simultaneously
-	if (tileState.damageState == DropshotTileState::STATE_BROKEN)
-		return false;
-
-	if (dsInfo.hasDamaged) {
-		float timeSinceDamage = (tickCount - dsInfo.lastDamageTick) * tickTime;
-		if (timeSinceDamage <= RLConst::Dropshot::MIN_DAMAGE_INTERVAL)
-			return false; // Hasn't been long enough since we last damaged
-	}
-
-	Vec vel = _rigidBody.getLinearVelocity() * BT_TO_UU;
-	if (vel.z > -RLConst::Dropshot::MIN_DOWNWARD_SPEED_TO_DAMAGE)
-		return false;
-
-	if (dsInfo.chargeLevel > 1 && dsInfo.yTargetDir != 0)
-		if (RS_SGN(tilePos.y) != dsInfo.yTargetDir)
-			return false; // Wrong side of the arena
-
-	// All checks passed
-
-	// Break the tile(s)
-	{
-		std::vector<int> indicesToBreak = DropshotTiles::GetNeighborIndices(tileIdx, dsInfo.chargeLevel);
-		for (int i : indicesToBreak) {
-			DropshotTileState& state = tilesState.states[teamIdx][i];
-			if (state.damageState != DropshotTileState::STATE_BROKEN)
-				state.damageState++;
-		}
-	}
-	dsInfo.hasDamaged = true;
-	dsInfo.lastDamageTick = tickCount;
-	dsInfo.accumulatedHitForce = 0;
-	dsInfo.chargeLevel = 1;
-	dsInfo.yTargetDir = 0;
-	return true;
 }
 
 RS_NS_END

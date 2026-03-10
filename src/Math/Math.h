@@ -10,7 +10,7 @@ struct LinearPieceCurve {
 };
 
 namespace Math {
-	btVector3 RoundVec(btVector3 vec, float precision);
+	Vec RoundVec(Vec vec, float precision);
 
 	// NOTE: min is inclusive, max is exclusive
 	// Seed will be used if not -1

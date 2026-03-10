@@ -2,10 +2,6 @@
 
 #include "../DataStream/DataStreamIn.h"
 
-#include "../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
-#include "../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h"
-#include "../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btTriangleMesh.h"
-
 RS_NS_START
 
 void CollisionMeshFile::ReadFromStream(DataStreamIn& in, bool silent, std::string filePath) {
@@ -59,19 +55,6 @@ void CollisionMeshFile::ReadFromStream(DataStreamIn& in, bool silent, std::strin
 	if (!silent)
 		RS_LOG("   > Loaded " << numVertices << " verts and " << numTris << " tris, hash: 0x" << std::hex << hash);
 }
-
-btTriangleMesh* CollisionMeshFile::MakeBulletMesh() {
-	btTriangleMesh* result = new btTriangleMesh();
-
-	for (Vertex& vert : vertices)
-		result->findOrAddVertex(btVector3(vert.x, vert.y, vert.z), false);
-
-	for (Triangle& tri : tris)
-		result->addTriangleIndices(tri.vertexIndexes[0], tri.vertexIndexes[1], tri.vertexIndexes[2]);
-
-	return result;
-}
-
 void CollisionMeshFile::UpdateHash() {
 	uint32_t hash = vertices.size() + (tris.size() * vertices.size());
 

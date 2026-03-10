@@ -65,7 +65,7 @@ void GameEventTracker::Update(Arena* arena) {
 			Car* passer;
 			if (GetShooterPasser(
 				arena,
-				RS_TEAM_FROM_Y(-arena->ball->_rigidBody.getWorldTransform().m_origin.y()),
+				RS_TEAM_FROM_Y(-arena->ball->_internalState.pos.y),
 				shooter, true, passer,
 				config.goalMaxTouchTime * tickrate,
 				config.passMaxTouchTime * tickrate
@@ -82,7 +82,7 @@ void GameEventTracker::Update(Arena* arena) {
 					// Can't make a shot yet
 				} else {
 
-					float speedSq = (arena->ball->_rigidBody.m_linearVelocity * BT_TO_UU).length2();
+					float speedSq = arena->ball->_internalState.vel.LengthSq();
 					if (speedSq >= config.shotMinSpeed * config.shotMinSpeed) {
 						Team goalTeam;
 						if (arena->IsBallProbablyGoingIn(config.shotMinScoreTime, config.predScoreExtraMargin, &goalTeam)) {

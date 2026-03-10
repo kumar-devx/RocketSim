@@ -1,16 +1,9 @@
 #pragma once
 #include "../PhysState/PhysState.h"
 #include "CarConfig/CarConfig.h"
-#include "../btVehicleRL/btVehicleRL.h"
 #include "../CarControls.h"
 #include "../BallHitInfo/BallHitInfo.h"
 #include "../MutatorConfig/MutatorConfig.h"
-
-#include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
-#include "../../../libsrc/bullet3-3.24/BulletDynamics/Vehicle/btDefaultVehicleRaycaster.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCompoundShape.h"
-#include "../../../src/Sim/btVehicleRL/btVehicleRL.h"
 
 RS_NS_START
 
@@ -156,12 +149,6 @@ public:
 	// Respawn the car, called after we have been demolished and waited for the respawn timer
 	void Respawn(GameMode gameMode, int seed = -1, float boostAmount = RLConst::BOOST_SPAWN_AMOUNT);
 
-	btVehicleRL _bulletVehicle;
-	btDefaultVehicleRaycaster _bulletVehicleRaycaster;
-	btRigidBody _rigidBody;
-	btCompoundShape _compoundShape;
-	btBoxShape _childHitboxShape;
-
 	// NOTE: Not all values are updated because they are unneeded for internal simulation
 	// Those values are only updated when GetState() is called
 	CarState _internalState;
@@ -186,8 +173,6 @@ public:
 
 	Vec _velocityImpulseCache = { 0,0,0 };
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
-
-	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
 	
 	// For construction by Arena
 	static Car* _AllocateCar() { return new Car(); }

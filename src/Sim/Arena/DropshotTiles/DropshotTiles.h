@@ -1,6 +1,5 @@
 #pragma once
 #include "../../../RLConst.h"
-#include "../../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
 
 RS_NS_START
 
@@ -35,7 +34,6 @@ namespace DropshotTiles {
 	void Init();
 
 	Vec GetTilePos(int team, int index);
-	std::vector<btCollisionShape*> MakeTileShapes();
 	std::vector<int> GetNeighborIndices(int startIdx, int radius);
 };
 

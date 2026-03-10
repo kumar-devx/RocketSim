@@ -5,6 +5,9 @@
 #include "../Ball/Ball.h"
 #include "../Car/Car.h"
 #include "CudaEngine.h"
+#include "BallKernels.h"
+#include "CarKernels.h"
+#include "CollisionKernels.h"
 #include "../../RocketSim.h"
 
 RS_NS_START
@@ -173,17 +176,41 @@ void ArenaBatch::StepAll(int ticksToSimulate) {
         // Sync all arenas to GPU
         SyncToGPU();
         
-        // Launch batch kernel via wrapper function
         float deltaTime = arenas_[0]->tickTime;
-        LaunchBatchArenaPhysicsKernel(
-            gpuBalls_.get(),
-            gpuCars_.get(),
-            carOffsets_.get(),
-            numArenas,
-            totalCars,
-            deltaTime,
-            cudaEngine->GetStream()
-        );
+        cudaStream_t stream = cudaEngine->GetStream();
+        
+        // OPTIMIZED: Use individual parallelized kernels instead of batch kernel
+        // This processes all balls and all cars in parallel across GPU cores
+        
+        // Update all balls in parallel (one thread per ball)
+        LaunchBallPhysicsKernel(gpuBalls_.get(), numArenas, deltaTime, stream);
+        
+        // Update all cars in parallel (one thread per car)
+        if (totalCars > 0) {
+            LaunchCarPhysicsKernel(gpuCars_.get(), totalCars, deltaTime, stream);
+            LaunchCarGroundDetectionKernel(gpuCars_.get(), totalCars, stream);
+        }
+        
+        // Collision detection: all balls with floor
+        LaunchBallFloorCollisionKernel(gpuBalls_.get(), numArenas, stream);
+        
+        // Ball-car collisions within each arena
+        // Process each arena's ball with its cars
+        for (int i = 0; i < numArenas; i++) {
+            int carStart = carOffsets_.get()[i];
+            int carEnd = (i < numArenas - 1) ? carOffsets_.get()[i + 1] : totalCars;
+            int arenaCars = carEnd - carStart;
+            
+            if (arenaCars > 0) {
+                LaunchBallCarCollisionKernel(
+                    &gpuBalls_.get()[i],
+                    &gpuCars_.get()[carStart],
+                    1,
+                    arenaCars,
+                    stream
+                );
+            }
+        }
         
         // Wait for GPU
         cudaEngine->Synchronize();

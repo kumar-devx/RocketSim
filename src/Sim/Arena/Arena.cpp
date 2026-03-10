@@ -1,58 +1,17 @@
 #include "Arena.h"
 #include "../../RocketSim.h"
 
-#ifdef RS_CUDA_ENABLED
-#pragma message("RS_CUDA_ENABLED is defined in Arena.cpp")
 #include "../Cuda/CudaEngine.h"
 #include "../Cuda/GpuTypes.h"
-#else
-#pragma message("RS_CUDA_ENABLED is NOT defined in Arena.cpp")
-#endif
-
-#include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btAxisSweep3.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btDbvtBroadphase.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btSimpleBroadphase.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btOverlappingPairCache.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btDefaultCollisionConfiguration.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btSphereShape.h"
+#include "../Cuda/GpuMeshCollision.h"
 #include "DropshotTiles/DropshotTiles.h"
 
 RS_NS_START
 
 void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
 
-	bool
-		ballChanged = mutatorConfig.ballRadius != this->_mutatorConfig.ballRadius || mutatorConfig.ballMass != this->_mutatorConfig.ballMass,
-		carMassChanged = mutatorConfig.carMass != this->_mutatorConfig.carMass,
-		gravityChanged = mutatorConfig.gravity != this->_mutatorConfig.gravity;
-
 	this->_mutatorConfig = mutatorConfig;
-
-	_bulletWorld.setGravity(mutatorConfig.gravity * UU_TO_BT);
-	
-	if (ballChanged) {
-		// We'll need to remake the ball
-		_bulletWorld.removeCollisionObject(&ball->_rigidBody);
-		delete ball->_collisionShape;
-		ball->_BulletSetup(gameMode, &_bulletWorld, mutatorConfig, _config.noBallRot);
-	}
-
-	if (carMassChanged) {
-		for (Car* car : _cars) {
-			btVector3 newCarInertia;
-			car->_childHitboxShape.calculateLocalInertia(mutatorConfig.carMass, newCarInertia);
-			car->_rigidBody.setMassProps(mutatorConfig.ballMass, newCarInertia);
-		}
-	}
-
-	// Update ball rigidbody physics values for world contact
-	// NOTE: Cars don't use their rigidbody physics values for world contact
-	ball->_rigidBody.setFriction(mutatorConfig.ballWorldFriction);
-	ball->_rigidBody.setRestitution(mutatorConfig.ballWorldRestitution);
-	ball->_rigidBody.setDamping(mutatorConfig.ballDrag, 0);
+	ball->_SetPhysicsProps(mutatorConfig);
 }
 
 Car* Arena::AddCar(Team team, const CarConfig& config) {
@@ -66,7 +25,6 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
 		RS_ERR_CLOSE("Arena::AddCar(): failed to insert new car (ID collision)");
 	}
 
-	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
 	car->Respawn(gameMode, -1, _mutatorConfig.carSpawnBoostAmount);
 
 	return car;
@@ -95,7 +53,6 @@ bool Arena::RemoveCar(uint32_t id) {
 		Car* car = itr->second;
 		_carIDMap.erase(itr);
 		_cars.erase(car);
-		_bulletWorld.removeCollisionObject(&car->_rigidBody);
 		if (ownsCars)
 			delete car;
 		return true;
@@ -235,194 +192,7 @@ void Arena::ResetToRandomKickoff(int seed) {
 }
 
 void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
-	for (int teamIdx = 0; teamIdx <= 1; teamIdx++) {
-		for (int tileIdx = 0; tileIdx < RLConst::Dropshot::NUM_TILES_PER_TEAM; tileIdx++) {
-			auto& newState = state.states[teamIdx][tileIdx];
-
-			int rbIndex = tileIdx + (RLConst::Dropshot::NUM_TILES_PER_TEAM * teamIdx);
-			assert(rbIndex < _worldDropshotTileRBs.size());
-			auto dropshotTileRB = _worldDropshotTileRBs[rbIndex];
-			if (newState.damageState == DropshotTileState::STATE_BROKEN) {
-				dropshotTileRB->m_collisionFlags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
-			} else {
-				dropshotTileRB->m_collisionFlags &= ~btCollisionObject::CF_NO_CONTACT_RESPONSE;
-			}
-		}
-	}
-
 	_dropshotTilesState = state;
-}
-
-bool Arena::_BulletContactAddedCallback(
-	btManifoldPoint& contactPoint,
-	const btCollisionObjectWrapper* objA, int partID_A, int indexA,
-	const btCollisionObjectWrapper* objB, int partID_B, int indexB) {
-
-	auto
-		bodyA = objA->m_collisionObject,
-		bodyB = objB->m_collisionObject;
-
-	if (!objA->m_collisionObject->hasContactResponse() || !objB->m_collisionObject->hasContactResponse())
-		return true;
-
-	bool shouldSwap = false;
-	if ((bodyA->getUserIndex() != -1) && (bodyB->getUserIndex() != -1)) {
-		// If both bodies have a user index, the lower user index should be A
-		shouldSwap = bodyA->getUserIndex() > bodyB->getUserIndex();
-	} else {
-		// If only one body has a user index, make sure that body is A
-		shouldSwap = (bodyB->getUserIndex() != -1);
-	}
-
-	if (shouldSwap)
-		std::swap(bodyA, bodyB);
-
-	int
-		userIndexA = bodyA->getUserIndex(),
-		userIndexB = bodyB->getUserIndex();
-
-	bool carInvolved = (userIndexA == BT_USERINFO_TYPE_CAR);
-	if (carInvolved) {
-
-		Car* car = (Car*)bodyA->getUserPointer();
-		Arena* arenaInst = (Arena*)car->_bulletVehicle.m_dynamicsWorld->getWorldUserInfo();
-
-		if (userIndexB == BT_USERINFO_TYPE_BALL) {
-			// Car + Ball
-			arenaInst->
-				_BtCallback_OnCarBallCollision(car, (Ball*)bodyB->getUserPointer(), contactPoint, shouldSwap);
-		} else if (userIndexB == BT_USERINFO_TYPE_CAR) {
-			// Car + Car
-			arenaInst->
-				_BtCallback_OnCarCarCollision(car, (Car*)bodyB->getUserPointer(), contactPoint);
-		} else {
-			// Car + World
-			arenaInst->
-				_BtCallback_OnCarWorldCollision(car, (btCollisionObject*)bodyB->getUserPointer(), contactPoint);
-		}
-	} else if (userIndexA == BT_USERINFO_TYPE_BALL && userIndexB == BT_USERINFO_TYPE_DROPSHOT_TILE) {
-
-		Arena* arenaInst = (Arena*)bodyB->getUserPointer();
-		arenaInst->ball->_OnDropshotTileCollision(
-			arenaInst->_dropshotTilesState, bodyB->getUserIndex2(), bodyB, arenaInst->tickCount, arenaInst->tickTime
-		);
-
-	} else if (userIndexA == BT_USERINFO_TYPE_BALL && userIndexB == -1) {
-		// Ball + World
-		Arena* arenaInst = (Arena*)bodyB->getUserPointer();
-		arenaInst->ball->_OnWorldCollision(arenaInst->gameMode, contactPoint.m_normalWorldOnB, arenaInst->tickTime);
-		
-		// Set as special (unless in snowday)
-		if (arenaInst->gameMode != GameMode::SNOWDAY)
-			contactPoint.m_isSpecial = true;
-	}
-	
-	btAdjustInternalEdgeContacts(
-		contactPoint, 
-		(shouldSwap ? objA : objB), (shouldSwap ? objB : objA),
-		(shouldSwap ? partID_A : partID_B), (shouldSwap ? indexA : indexB)
-	);
-	return true;
-}
-
-void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint& manifoldPoint, bool ballIsBodyA) {
-	using namespace RLConst;
-
-	Vec relBallPos = (ballIsBodyA ? manifoldPoint.m_localPointA : manifoldPoint.m_localPointB) * BT_TO_UU;
-	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount);
-}
-
-void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
-	using namespace RLConst;
-
-	// Manually override manifold friction/restitution
-	manifoldPoint.m_combinedFriction = RLConst::CARCAR_COLLISION_FRICTION;
-	manifoldPoint.m_combinedRestitution = RLConst::CARCAR_COLLISION_RESTITUTION;
-
-	// Test collision both ways
-	for (int i = 0; i < 2; i++) {
-
-		bool isSwapped = (i == 1);
-		if (isSwapped)
-			std::swap(car1, car2);
-
-		CarState
-			state = car1->GetState(),
-			otherState = car2->GetState();
-
-		if (state.isDemoed || otherState.isDemoed)
-			return;
-
-		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
-			continue; // In cooldown
-
-		Vec deltaPos = (otherState.pos - state.pos);
-		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
-
-			Vec velDir = state.vel.Normalized();
-			Vec dirToOtherCar = deltaPos.Normalized();
-
-			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
-			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
-
-			if (speedTowardsOtherCar > otherCarAwaySpeed) { // Going towards other car faster than they are going away
-
-				Vec localPoint = isSwapped ? manifoldPoint.m_localPointB : manifoldPoint.m_localPointA;
-				bool hitWithBumper = (localPoint.x * BT_TO_UU) > BUMP_MIN_FORWARD_DIST;
-				if (hitWithBumper) {
-
-					bool isDemo;
-					switch (_mutatorConfig.demoMode) {
-					case DemoMode::ON_CONTACT:
-						isDemo = true; // BOOM
-						break;
-					case DemoMode::DISABLED:
-						isDemo = false;
-						break;
-					default:
-						isDemo = state.isSupersonic;
-					}
-
-					if (isDemo && !_mutatorConfig.enableTeamDemos)
-						isDemo = car1->team != car2->team;
-
-					if (isDemo) {
-						car2->Demolish(_mutatorConfig.respawnDelay);
-					} else {
-						bool groundHit = car2->_internalState.isOnGround;
-
-						float baseScale =
-							(groundHit ? BUMP_VEL_AMOUNT_GROUND_CURVE : BUMP_VEL_AMOUNT_AIR_CURVE).GetOutput(speedTowardsOtherCar);
-
-						Vec hitUpDir =
-							(otherState.isOnGround ? (Vec)car2->GetUpDir() : Vec(0, 0, 1));
-
-						Vec bumpImpulse =
-							velDir * baseScale +
-							hitUpDir * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(speedTowardsOtherCar)
-							* _mutatorConfig.bumpForceScale;
-
-						car2->_velocityImpulseCache += bumpImpulse * UU_TO_BT;
-					}
-
-					car1->_internalState.carContact.otherCarID = car2->id;
-					car1->_internalState.carContact.cooldownTimer = _mutatorConfig.bumpCooldownTime;
-
-					if (_carBumpCallback.func)
-						_carBumpCallback.func(this, car1, car2, isDemo, _carBumpCallback.userInfo);
-				}
-			}
-		}
-	}
-}
-
-void Arena::_BtCallback_OnCarWorldCollision(Car* car, btCollisionObject* world, btManifoldPoint& manifoldPoint) {
-	car->_internalState.worldContact.hasContact = true;
-	car->_internalState.worldContact.contactNormal = manifoldPoint.m_normalWorldOnB;
-
-	// Manually override manifold friction/restitution
-	manifoldPoint.m_combinedFriction = _mutatorConfig.carWorldFriction;
-	manifoldPoint.m_combinedRestitution = _mutatorConfig.carWorldRestitution;
 }
 
 Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
@@ -435,75 +205,11 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 	this->gameMode = gameMode;
 	this->tickTime = 1 / tickRate;
 
-	{ // Initialize world
-
-		btDefaultCollisionConstructionInfo collisionConfigConstructionInfo = {};
-
-		// These take up a ton of memory normally
-		if (_config.memWeightMode == ArenaMemWeightMode::LIGHT) {
-			collisionConfigConstructionInfo.m_defaultMaxPersistentManifoldPoolSize /= 32;
-			collisionConfigConstructionInfo.m_defaultMaxCollisionAlgorithmPoolSize /= 64;
-		} else {
-			collisionConfigConstructionInfo.m_defaultMaxPersistentManifoldPoolSize /= 16;
-			collisionConfigConstructionInfo.m_defaultMaxCollisionAlgorithmPoolSize /= 32;
-		}
-
-		_bulletWorldParams.collisionConfig.setup(collisionConfigConstructionInfo);
-
-		_bulletWorldParams.collisionDispatcher.setup(&_bulletWorldParams.collisionConfig);
-		_bulletWorldParams.constraintSolver = btSequentialImpulseConstraintSolver();
-
-		_bulletWorldParams.overlappingPairCache = new btHashedOverlappingPairCache();
-		
-		if (_config.useCustomBroadphase) {
-			float cellSizeMultiplier = 1;
-			if (_config.memWeightMode == ArenaMemWeightMode::LIGHT) {
-				// Increase cell size
-				cellSizeMultiplier = 2.0f;
-			}
-
-			_bulletWorldParams.broadphase = new btRSBroadphase(
-				_config.minPos * UU_TO_BT,
-				_config.maxPos * UU_TO_BT,
-				_config.maxAABBLen * UU_TO_BT * cellSizeMultiplier,
-				_bulletWorldParams.overlappingPairCache,
-				_config.maxObjects);
-		} else {
-			_bulletWorldParams.broadphase = new btDbvtBroadphase(_bulletWorldParams.overlappingPairCache);
-		}
-
-		_bulletWorld.setup(
-			&_bulletWorldParams.collisionDispatcher,
-			_bulletWorldParams.broadphase,
-			&_bulletWorldParams.constraintSolver,
-			&_bulletWorldParams.collisionConfig
-		);
-
-		_bulletWorld.setGravity(_mutatorConfig.gravity * UU_TO_BT);
-
-		// Adjust solver configuration to be closer to older Bullet (Rocket League's Bullet is from somewhere between 2013 and 2015)
-		auto& solverInfo = _bulletWorld.getSolverInfo();
-		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
-		solverInfo.m_erp2 = 0.8f;
-	}
-
 	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-
-	if (loadArenaStuff) {
-		_SetupArenaCollisionShapes();
-
-		// Give arena collision shapes the proper restitution/friction values
-		for (auto* rb : _worldCollisionRBs) {
-			rb->setRestitution(RLConst::ARENA_COLLISION_BASE_RESTITUTION);
-			rb->setFriction(RLConst::ARENA_COLLISION_BASE_FRICTION);
-			rb->setRollingFriction(0.f);
-		}
-	}
 
 	{ // Initialize ball
 		ball = Ball::_AllocBall();
-
-		ball->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig, _config.noBallRot);
+		ball->_SetPhysicsProps(_mutatorConfig);
 		ball->SetState(BallState());
 	}
 
@@ -528,8 +234,6 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 				BoostPadConfig padConfig;
 
 				padConfig.isBig = i < LOCS_AMOUNT_BIG;
-
-				btVector3 pos;
 				if (isHoops) {
 					padConfig.pos = padConfig.isBig ? LOCS_BIG_HOOPS[i] : LOCS_SMALL_HOOPS[i - LOCS_AMOUNT_BIG];
 				} else {
@@ -545,15 +249,8 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 		}
 	}
 
-	// Set internal tick callback
-	_bulletWorld.setWorldUserInfo(this);
-
-	gContactAddedCallback = &Arena::_BulletContactAddedCallback;
-
-#ifdef RS_CUDA_ENABLED
 	// Initialize CUDA buffers if available
 	_InitCudaBuffers();
-#endif
 }
 
 Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float tickRate) {
@@ -714,14 +411,12 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 		RS_ERR_CLOSE("Arena::DeserializeNewCar(): Failed to insert car while deserializing");
 	}
 
-	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
 	car->SetState(car->_internalState);
 
 	return car;
 }
 
 void Arena::Step(int ticksToSimulate) {
-#ifdef RS_CUDA_ENABLED
 	// GPU-ONLY MODE - No CPU fallback
 	if (!_useCuda) {
 		RS_ERR_CLOSE("Arena::Step() - GPU acceleration required but not available! "
@@ -729,76 +424,6 @@ void Arena::Step(int ticksToSimulate) {
 	}
 
 	_StepGPU(ticksToSimulate);
-	return;
-#else
-	// CPU fallback path (only if CUDA not compiled)
-	for (int i = 0; i < ticksToSimulate; i++) {
-
-		_bulletWorld.setWorldUserInfo(this);
-
-		{ // Ball zero-vel sleeping
-			if (ball->_rigidBody.m_linearVelocity.length2() == 0 && ball->_rigidBody.m_angularVelocity.length2() == 0) {
-				ball->_rigidBody.setActivationState(ISLAND_SLEEPING);
-			} else {
-				ball->_rigidBody.setActivationState(ACTIVE_TAG);
-			}
-		}
-
-		bool ballOnly = _cars.empty();
-
-		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
-		
-		for (Car* car : _cars)
-			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
-
-		if (hasArenaStuff && !ballOnly) {
-			for (BoostPad* pad : _boostPads)
-				pad->_PreTickUpdate(tickTime);
-		}
-
-		// Update ball
-		ball->_PreTickUpdate(gameMode, tickTime);
-
-		// Update world
-		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
-
-		for (Car* car : _cars) {
-			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
-			car->_FinishPhysicsTick(_mutatorConfig);
-			if (hasArenaStuff) {
-				if (_config.useCustomBoostPads) {
-					// TODO: This is quite slow, we should use a sorting method of some sort
-					for (auto& boostPad : _boostPads) {
-						boostPad->_CheckCollide(car);
-					}
-				} else {
-					_boostPadGrid.CheckCollision(car);
-				}
-			}
-		}
-
-		if (hasArenaStuff && !ballOnly)
-			for (BoostPad* pad : _boostPads)
-				pad->_PostTickUpdate(tickTime, _mutatorConfig);
-
-		ball->_FinishPhysicsTick(_mutatorConfig);
-
-		// Sync tiles state after the tick ends.
-		// We don't want to sync the state on tile damage, 
-		//	because that would cause the ball to immediately fall through the newly-broken tile.
-		if (gameMode == GameMode::DROPSHOT)
-			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
-				SetDropshotTilesState(_dropshotTilesState);
-
-		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
-			if (IsBallScored()) {
-				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
-			}
-		}
-
-		tickCount++;
-	}
-#endif // RS_CUDA_ENABLED
 }
 
 // Returns negative: within
@@ -815,8 +440,8 @@ float BallWithinHoopsGoalXYMarginSq(float x, float y) {
 }
 
 bool Arena::IsBallProbablyGoingIn(float maxTime, float extraMargin, Team* goalTeamOut) const {
-	Vec ballPos = ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
-	Vec ballVel = ball->_rigidBody.m_linearVelocity * BT_TO_UU;
+	Vec ballPos = ball->_internalState.pos;
+	Vec ballVel = ball->_internalState.vel;
 
 	if (gameMode == GameMode::SOCCAR || gameMode == GameMode::SNOWDAY) {
 		if (abs(ballVel.y) < FLT_EPSILON)
@@ -942,18 +567,18 @@ bool Arena::IsBallScored() const {
 	case GameMode::HEATSEEKER:
 	case GameMode::SNOWDAY:
 	{
-		float ballPosY = ball->_rigidBody.getWorldTransform().m_origin.y() * BT_TO_UU;
+		float ballPosY = ball->_internalState.pos.y;
 		return abs(ballPosY) > (_mutatorConfig.goalBaseThresholdY + _mutatorConfig.ballRadius);
 	}
 	case GameMode::HOOPS:
 	{
-		if (ball->_rigidBody.getWorldTransform().m_origin.z() < RLConst::HOOPS_GOAL_SCORE_THRESHOLD_Z * UU_TO_BT) {
+		if (ball->_internalState.pos.z < RLConst::HOOPS_GOAL_SCORE_THRESHOLD_Z) {
 			constexpr float
 				SCALE_Y = 0.9f,
 				OFFSET_Y = 2770.f,
 				RADIUS_SQ = 716 * 716;
 
-			Vec ballPos = ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
+			Vec ballPos = ball->_internalState.pos;
 			return BallWithinHoopsGoalXYMarginSq(ballPos.x, ballPos.y) < 0;
 		} else {
 			return false;
@@ -961,7 +586,7 @@ bool Arena::IsBallScored() const {
 	}
 	case GameMode::DROPSHOT:
 	{
-		if ((ball->_rigidBody.getWorldTransform().m_origin.z() * BT_TO_UU) < -(_mutatorConfig.ballRadius * 1.75f)) {
+		if (ball->_internalState.pos.z < -(_mutatorConfig.ballRadius * 1.75f)) {
 			return true;
 		} else {
 			return false;
@@ -973,15 +598,6 @@ bool Arena::IsBallScored() const {
 }
 
 Arena::~Arena() {
-
-	// Remove all from bullet world constraints
-	while (_bulletWorld.getNumConstraints() > 0)
-		_bulletWorld.removeConstraint(0);
-
-	// Manually remove all collision objects
-	// Otherwise we run into issues regarding deconstruction order
-	while (_bulletWorld.getNumCollisionObjects() > 0)
-		_bulletWorld.removeCollisionObject(_bulletWorld.getCollisionObjectArray()[0]);
 
 	// Remove all cars
 	if (ownsCars) {
@@ -1002,140 +618,9 @@ Arena::~Arena() {
 		}
 	}
 
-	// Remove all rigidbodies and collision shapes that we own
-	for (auto rb : _worldCollisionRBs) {
-		auto shape = rb->getCollisionShape();
-		
-		bool isBvh = dynamic_cast<btBvhTriangleMeshShape*>(shape);
-		if (isBvh) {
-			// Don't free BVH shapes because we don't own them
-		} else {
-			delete shape;
-		}
-
-		delete rb;
-	}
-
-	delete _bulletWorldParams.overlappingPairCache;
-	delete _bulletWorldParams.broadphase;
-
-#ifdef RS_CUDA_ENABLED
 	_CleanupCudaBuffers();
-#endif
 }
 
-btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3 posBT, int group, int mask) {
-	btRigidBody* shapeRB = new btRigidBody(0, NULL, shape);
-	shapeRB->setWorldTransform(btTransform(btMatrix3x3::getIdentity(), posBT));
-	shapeRB->setUserPointer(this);
-	if (group || mask) {
-		_bulletWorld.addRigidBody(shapeRB, group, mask);
-	} else {
-		_bulletWorld.addRigidBody(shapeRB);
-	}
-	_worldCollisionRBs.push_back(shapeRB);
-	return shapeRB;
-}
-
-void Arena::_SetupArenaCollisionShapes() {
-	assert(gameMode != GameMode::THE_VOID);
-	bool isHoops = gameMode == GameMode::HOOPS;
-	bool isDropShot = gameMode == GameMode::DROPSHOT;
-
-	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
-
-	if (collisionMeshes.empty()) {
-		RS_ERR_CLOSE(
-			"No arena meshes found for gamemode " << GAMEMODE_STRS[(int)gameMode] << ", " <<
-			"the mesh files should be in " << RocketSim::_collisionMeshesFolder
-		)
-	}
-
-	for (size_t i = 0; i < collisionMeshes.size(); i++) {
-		auto mesh = collisionMeshes[i];
-
-		bool isHoopsNet = false;
-
-		if (isHoops) { // Detect net mesh and disable car collision
-			const unsigned char* vertexBase;
-			int numVerts, stride;
-			const unsigned char* indexBase;
-			int indexStride, numFaces;
-			mesh->getMeshInterface()->getLockedReadOnlyVertexIndexBase(&vertexBase, numVerts, stride, &indexBase, indexStride, numFaces);
-			
-			constexpr int HOOPS_NET_NUM_VERTS = 505;
-			if (numVerts == HOOPS_NET_NUM_VERTS) {
-				isHoopsNet = true;
-			}
-		}
-
-		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
-		_worldCollisionBvhShapes.push_back(mesh);
-		_AddStaticCollisionShape(mesh, btVector3(0, 0, 0), mask, mask);
-
-		// Don't free the BVH when we deconstruct this arena
-		mesh->m_ownsBvh = false;
-	}
-
-	{ // Add arena collision planes (floor/walls/ceiling)
-		using namespace RLConst;
-
-		float 
-			extentX = isHoops ? ARENA_EXTENT_X_HOOPS : ARENA_EXTENT_X,
-			extentY = isHoops ? ARENA_EXTENT_Y_HOOPS : ARENA_EXTENT_Y,
-			height  = isDropShot ? ARENA_HEIGHT_DROPSHOT : (isHoops ? ARENA_HEIGHT_HOOPS : ARENA_HEIGHT);
-
-		auto fnAddPlane = [&](Vec posUU, Vec normal, int mask = 0) {
-			assert(normal.Length() == 1);
-			auto planeShape = new btStaticPlaneShape(normal, 0);
-
-			_worldCollisionPlaneShapes.push_back(planeShape);
-			_AddStaticCollisionShape(
-				planeShape,
-				posUU * UU_TO_BT,
-				mask, mask
-			);
-		};
-
-		// Floor
-		fnAddPlane(Vec(0, 0, isDropShot ? RLConst::FLOOR_HEIGHT_DROPSHOT : 0), Vec(0, 0, 1), isDropShot ? CollisionMasks::DROPSHOT_FLOOR : 0);
-
-		// Ceiling
-		fnAddPlane(Vec(0, 0, height), Vec(0, 0, -1), 0);
-
-		if (!isDropShot) {
-			// Side walls
-			fnAddPlane(Vec(-extentX, 0, height / 2), btVector3( 1, 0, 0));
-			fnAddPlane(Vec(extentX, 0, height / 2),  btVector3(-1, 0, 0));
-		}
-		
-
-		if (isHoops) {
-			// Y walls
-			fnAddPlane(Vec(0, -extentY, height / 2), btVector3(0,  1, 0));
-			fnAddPlane(Vec(0, extentY, height / 2),  btVector3(0, -1, 0));
-		}
-	}
-
-	if (isDropShot) {
-		// Add tiles
-		auto tileShapes = DropshotTiles::MakeTileShapes();
-		for (int i = 0; i < tileShapes.size(); i++) {
-			int teamIdx = i / RLConst::Dropshot::NUM_TILES_PER_TEAM;
-			int tileIdx = i % RLConst::Dropshot::NUM_TILES_PER_TEAM;
-
-			// Shift down so the collision doesn't peek through the floor
-			Vec pos = Vec(0, 0, -tileShapes[i]->getMargin());
-
-			auto tileRB = _AddStaticCollisionShape(tileShapes[i], pos, DROPSHOT_TILE, DROPSHOT_TILE);
-			tileRB->setUserIndex(BT_USERINFO_TYPE_DROPSHOT_TILE);
-			tileRB->setUserIndex2(i);
-			_worldDropshotTileRBs.push_back(tileRB);
-		}
-	}
-}
-
-#ifdef RS_CUDA_ENABLED
 // GPU acceleration implementation
 
 void Arena::_InitCudaBuffers() {
@@ -1172,6 +657,66 @@ void Arena::_InitCudaBuffers() {
 
 	// Initial sync to GPU
 	_SyncStatesToGPU();
+
+	// Phase 2: Load collision meshes to GPU
+	// Build triangles directly from parsed collision mesh files.
+	try {
+		std::vector<CpuBvhBuilder::Triangle> allTriangles;
+
+		const auto& collisionMeshes = RocketSim::GetArenaCollisionMeshes(gameMode);
+		for (const auto& meshFile : collisionMeshes) {
+			for (const auto& triIdx : meshFile.tris) {
+				const auto& v0 = meshFile.vertices[triIdx.vertexIndexes[0]];
+				const auto& v1 = meshFile.vertices[triIdx.vertexIndexes[1]];
+				const auto& v2 = meshFile.vertices[triIdx.vertexIndexes[2]];
+
+				CpuBvhBuilder::Triangle tri;
+				tri.v0 = { v0.x, v0.y, v0.z };
+				tri.v1 = { v1.x, v1.y, v1.z };
+				tri.v2 = { v2.x, v2.y, v2.z };
+
+				GpuVec3 e1 = {
+					tri.v1.x - tri.v0.x,
+					tri.v1.y - tri.v0.y,
+					tri.v1.z - tri.v0.z
+				};
+				GpuVec3 e2 = {
+					tri.v2.x - tri.v0.x,
+					tri.v2.y - tri.v0.y,
+					tri.v2.z - tri.v0.z
+				};
+
+				tri.normal = {
+					e1.y * e2.z - e1.z * e2.y,
+					e1.z * e2.x - e1.x * e2.z,
+					e1.x * e2.y - e1.y * e2.x
+				};
+
+				float len = sqrtf(tri.normal.x * tri.normal.x +
+					tri.normal.y * tri.normal.y +
+					tri.normal.z * tri.normal.z);
+				if (len > 1e-6f) {
+					tri.normal.x /= len;
+					tri.normal.y /= len;
+					tri.normal.z /= len;
+				}
+				tri.padding = 0;
+
+				allTriangles.push_back(tri);
+			}
+		}
+		
+		// Load triangles to GPU
+		if (!allTriangles.empty()) {
+			_gpuArenaCollision = new GpuArenaCollisionData();
+			auto gpuStream = cudaEngine->GetStream();
+			LoadArenaCollisionMeshesFromTriangles(allTriangles, _gpuArenaCollision, gpuStream);
+		}
+	} catch (const std::exception& e) {
+		// Non-critical error - GPU collision just won't be available
+		RS_WARN("Failed to load arena collision meshes to GPU: " << e.what());
+		_gpuArenaCollision = nullptr;
+	}
 }
 
 void Arena::_CleanupCudaBuffers() {
@@ -1195,6 +740,13 @@ void Arena::_CleanupCudaBuffers() {
 		_gpuCars = nullptr;
 	}
 
+	// Phase 2: Clean up GPU mesh collision data
+	if (_gpuArenaCollision) {
+		UnloadArenaCollisionMeshes(_gpuArenaCollision);
+		delete _gpuArenaCollision;
+		_gpuArenaCollision = nullptr;
+	}
+
 	_useCuda = false;
 }
 
@@ -1202,7 +754,7 @@ void Arena::_SyncStatesToGPU() {
 	if (!_useCuda || !_gpuBall || !_gpuCars) return;
 	
 	// Sync ball state
-	BallState ballState = ball->GetState();
+	BallState ballState = ball->_internalState;
 	_gpuBall->pos = ToGpuVec3(ballState.pos);
 	_gpuBall->vel = ToGpuVec3(ballState.vel);
 	_gpuBall->angVel = ToGpuVec3(ballState.angVel);
@@ -1238,7 +790,7 @@ void Arena::_SyncStatesToGPU() {
 			}
 		}
 		
-		CarState carState = car->GetState();
+		CarState carState = car->_internalState;
 		GpuCarState& gpuCar = _gpuCars[carIdx];
 		gpuCar = {};
 		
@@ -1276,7 +828,7 @@ void Arena::_SyncStatesToGPU() {
 		gpuCar.mass = _mutatorConfig.carMass;
 		gpuCar.hitboxSize = ToGpuVec3(car->config.hitboxSize);
 		gpuCar.hitboxPosOffset = ToGpuVec3(car->config.hitboxPosOffset);
-		gpuCar.numWheels = car->_bulletVehicle.getNumWheels();
+		gpuCar.numWheels = 4;
 		gpuCar.tickCount = tickCount;
 		
 		carIdx++;
@@ -1305,7 +857,8 @@ void Arena::_SyncStatesFromGPU() {
 	ballState.vel = FromGpuVec3(_gpuBall->vel);
 	ballState.angVel = FromGpuVec3(_gpuBall->angVel);
 	ballState.rotMat = FromGpuMat3x3(_gpuBall->rotMat);
-	ball->SetState(ballState);
+	ball->_internalState = ballState;
+	ball->_internalState.tickCountSinceUpdate = 0;
 	
 	// Sync car states back
 	int carIdx = 0;
@@ -1321,7 +874,7 @@ void Arena::_SyncStatesFromGPU() {
 			RS_ERR_CLOSE("GPU produced invalid car state (non-finite or out-of-range values) for car id " << car->id);
 		}
 		
-		CarState carState = car->GetState();
+		CarState carState = car->_internalState;
 		carState.pos = FromGpuVec3(gpuCar.pos);
 		carState.vel = FromGpuVec3(gpuCar.vel);
 		carState.angVel = FromGpuVec3(gpuCar.angVel);
@@ -1330,7 +883,8 @@ void Arena::_SyncStatesFromGPU() {
 		carState.isDemoed = gpuCar.isDemoed;
 		carState.boost = gpuCar.boost_amount;
 		
-		car->SetState(carState);
+		car->_internalState = carState;
+		car->_internalState.tickCountSinceUpdate = 0;
 		
 		carIdx++;
 	}
@@ -1346,36 +900,22 @@ void Arena::_StepGPU(int ticksToSimulate) {
 		// Sync CPU state to GPU
 		_SyncStatesToGPU();
 		
-		// Launch GPU kernels
 		int numCars = static_cast<int>(_cars.size());
-		cudaEngine->UpdateArena(_gpuBall, _gpuCars, numCars, tickTime);
-
-		// Launch GPU car-to-car collision kernel (Phase 2-3 optimization)
-		// This replaces Bullet3's car-to-car collision processing on GPU
-		// Directly applies impulses to car velocities without CPU callback overhead
-		if (numCars > 1) {
-			LaunchCarToCarCollisionFull(
-				_gpuCars,
-				numCars,
-				_mutatorConfig.carMass,
-				cudaEngine->GetStream()
-			);
-
-			// Collision impulses can exceed sane speeds; clamp before feeding state back into Bullet.
-			LaunchCarVelocityLimitKernel(_gpuCars, numCars, cudaEngine->GetStream());
-		}
+		cudaEngine->UpdateArenaBatchFullPhysics(
+			_gpuBall,
+			_gpuCars,
+			numCars,
+			tickTime,
+			_gpuArenaCollision
+		);
 		
-		// Wait for GPU to finish (both physics and collision kernels)
+		// Wait for GPU to finish
 		cudaEngine->Synchronize();
 		
 		// Sync GPU state back to CPU
 		_SyncStatesFromGPU();
 		
-		// Still need to run collision detection and some game logic on CPU
-		// TODO: This will be moved to GPU in later sprints
-		_bulletWorld.setWorldUserInfo(this);
-		
-		// Update boost pads (CPU for now)
+		// Update boost pads (CPU-side only)
 		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
 		bool ballOnly = _cars.empty();
 		
@@ -1384,8 +924,7 @@ void Arena::_StepGPU(int ticksToSimulate) {
 				pad->_PreTickUpdate(tickTime);
 		}
 		
-		// Collision detection (still using Bullet for now)
-		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
+		// Physics integration is GPU-owned. CPU side only handles gameplay logic below.
 		
 		// Boost pad collision check
 		if (hasArenaStuff) {
@@ -1416,13 +955,12 @@ void Arena::_StepGPU(int ticksToSimulate) {
 		// Goal score callback
 		if (_goalScoreCallback.func != NULL) {
 			if (IsBallScored()) {
-				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
+				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_internalState.pos.y), _goalScoreCallback.userInfo);
 			}
 		}
 		
 		tickCount++;
 	}
 }
-#endif
 
 RS_NS_END

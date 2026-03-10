@@ -11,21 +11,12 @@
 #include "ArenaConfig/ArenaConfig.h"
 #include "DropshotTiles/DropshotTiles.h"
 
-#include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btDbvtBroadphase.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btStaticPlaneShape.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionDispatcher.h"
-#include "../../../libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.h"
-#include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDiscreteDynamicsWorld.h"
-#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btDefaultCollisionConfiguration.h"
-
 RS_NS_START
 
 // Forward declarations for CUDA types
-#ifdef RS_CUDA_ENABLED
 struct GpuBallState;
 struct GpuCarState;
-#endif
+struct GpuArenaCollisionData;
 
 typedef std::function<void(class Arena* arena, Team scoringTeam, void* userInfo)> GoalScoreEventFn;
 typedef std::function<void(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo)> CarBumpEventFn;
@@ -87,19 +78,7 @@ public:
 
 	Car* GetCar(uint32_t id);
 
-	btDiscreteDynamicsWorld _bulletWorld;
-	struct {
-		btDefaultCollisionConfiguration collisionConfig;
-		btCollisionDispatcher collisionDispatcher;
-		btOverlappingPairCache* overlappingPairCache;
-		btBroadphaseInterface* broadphase;
-		btSequentialImpulseConstraintSolver constraintSolver;
-	} _bulletWorldParams;
-
-	std::vector<btRigidBody*> _worldCollisionRBs = {};
-	std::vector<btBvhTriangleMeshShape*> _worldCollisionBvhShapes = {};
-	std::vector<btStaticPlaneShape*> _worldCollisionPlaneShapes = {};
-	std::vector<btRigidBody*> _worldDropshotTileRBs = {};
+	GpuArenaCollisionData* _gpuArenaCollision = nullptr;  // GPU mesh collision data (Phase 2)
 
 	struct {
 		GoalScoreEventFn func = NULL;
@@ -152,26 +131,6 @@ public:
 	// Free all associated memory
 	~Arena();
 
-	// NOTE: Passed shape pointer will be freed when arena is deconstructed
-	// NOTE: Shape will be automatically added to _worldCollisionRBs but no other list 
-	btRigidBody* _AddStaticCollisionShape(
-		btCollisionShape* shape,
-		btVector3 posBT = btVector3(0, 0, 0),
-		int group = 0, int mask = 0);
-
-	void _SetupArenaCollisionShapes();
-
-	// Static function called by Bullet internally when adding a collision point
-	static bool _BulletContactAddedCallback(
-		btManifoldPoint& cp,
-		const btCollisionObjectWrapper* colObjA, int partID_A, int indexA,
-		const btCollisionObjectWrapper* colObjB, int partID_B, int indexB
-	);
-
-	void _BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint& manifoldPoint, bool ballIsBodyA);
-	void _BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint);
-	void _BtCallback_OnCarWorldCollision(Car* car, btCollisionObject* worldObject, btManifoldPoint& manifoldPoint);
-
 	const ArenaConfig& GetArenaConfig() const {
 		return _config;
 	}
@@ -184,7 +143,6 @@ public:
 	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
 	void SetDropshotTilesState(const DropshotTilesState& tilesState);
 
-#ifdef RS_CUDA_ENABLED
 	// CUDA GPU acceleration support
 	bool _useCuda = false;
 	GpuBallState* _gpuBall = nullptr;
@@ -196,7 +154,6 @@ public:
 	void _SyncStatesToGPU();
 	void _SyncStatesFromGPU();
 	void _StepGPU(int ticksToSimulate);
-#endif
 
 private:
 	

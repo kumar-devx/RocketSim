@@ -19,12 +19,6 @@ protected:
 	constexpr Vec(float x, float y, float z, float w) : x(x), y(y), z(z), _w(w) {}
 public:
 
-#ifndef __CUDACC__  // Bullet conversion only available in C++ (not CUDA)
-	Vec(const btVector3& bulletVec) {
-		*(btVector3*)this = bulletVec;
-	}
-#endif
-
 	bool IsZero() const {
 		return (x == 0 && y == 0 && z == 0 && _w == 0);
 	}
@@ -110,12 +104,6 @@ public:
 		return ((float*)this)[index];
 	}
 
-#ifndef __CUDACC__  // Bullet conversion only available in C++ (not CUDA)
-	operator btVector3() const {
-		return *(btVector3*)(this);
-	}
-#endif
-
 	Vec operator+(const Vec& other) const;
 	Vec operator-(const Vec& other) const;
 	Vec operator*(const Vec& other) const;
@@ -164,11 +152,6 @@ public:
 	}
 };
 
-#ifndef __CUDACC__  // Bullet compatibility checks only in C++ (not CUDA)
-// Vec needs to be equal in both size and structure layout to btVector3, because they are type-punned to and from
-static_assert(sizeof(Vec) == sizeof(btVector3), "RocketSim Vec size must match btVector3 size");
-#endif
-
 // RocketSim 3x3 rotation matrix struct
 // NOTE: Column-major
 struct RS_ALIGN_16 RS_API RotMat {
@@ -179,17 +162,6 @@ struct RS_ALIGN_16 RS_API RotMat {
 	}
 
 	RotMat(Vec forward, Vec right, Vec up) : forward(forward), right(right), up(up) {}
-
-#ifndef __CUDACC__  // Bullet conversion only available in C++ (not CUDA)
-	RotMat(const btMatrix3x3& bulletMat) {
-		for (int i = 0; i < 3; i++) {
-			for (int j = 0; j < 3; j++) {
-				// NOTE: btMatrix3x3 is row-major, whereas we are column-major
-				(*this)[i][j] = bulletMat[j][i];
-			}
-		}
-	}
-#endif
 
 	static RotMat GetIdentity() {
 		return RotMat(
@@ -219,19 +191,6 @@ struct RS_ALIGN_16 RS_API RotMat {
 		assert(index >= 0 && index < 3);
 		return ((Vec*)(this))[index];
 	}
-
-#ifndef __CUDACC__  // Bullet conversion only available in C++ (not CUDA)
-	operator btMatrix3x3() const {
-		btMatrix3x3 result;
-		for (int i = 0; i < 3; i++) {
-			for (int j = 0; j < 3; j++) {
-				// NOTE: btMatrix3x3 is row-major, whereas we are column-major
-				result[i][j] = (*this)[j][i];
-			}
-		}
-		return result;
-	}
-#endif
 
 	RotMat operator+(const RotMat& other) const;
 	RotMat operator-(const RotMat& other) const;

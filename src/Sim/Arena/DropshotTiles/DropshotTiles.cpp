@@ -1,7 +1,5 @@
 #include "DropshotTiles.h"
 
-#include "../../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btConvexHullShape.h"
-
 RS_NS_START
 
 static Vec g_TilePositions[RLConst::Dropshot::NUM_TILES_PER_TEAM] = {};
@@ -17,46 +15,6 @@ Vec DropshotTiles::GetTilePos(int team, int index) {
 	assert(index >= 0 && team < Dropshot::NUM_TILES_PER_TEAM);
 
 	return g_TilePositions[index] * ((team == 0) ? -1 : 1);
-}
-
-std::vector<btCollisionShape*> DropshotTiles::MakeTileShapes() {
-	using namespace RLConst;
-
-	auto results = std::vector<btCollisionShape*>();
-
-	for (int team = 0; team <= 1; team++) {
-		for (int i = 0; i < Dropshot::NUM_TILES_PER_TEAM; i++) {
-			Vec pos = GetTilePos(team, i);
-
-			btConvexHullShape* hullShape = new btConvexHullShape();
-
-			for (int j = 0; j < 6; j++) {
-
-				Vec vert = pos * UU_TO_BT + Dropshot::TILE_HEXAGON_VERTS_BT[j];
-
-				constexpr float CLAMP_Y = Dropshot::TILE_OFFSET_Y * UU_TO_BT;
-
-				// Clamp vert from crossing middle part at x=0
-				if (team == 0) {
-					// Clamp max to CLAMP_Y
-					vert.y = RS_MIN(vert.y, -CLAMP_Y);
-				} else {
-					// Clamp min to CLAMP_Y
-					vert.y = RS_MAX(vert.y, CLAMP_Y);
-				}
-
-				hullShape->addPoint(vert);
-			}
-
-			hullShape->recalcLocalAabb();
-			btVector3 localInertia;
-			hullShape->calculateLocalInertia(0, localInertia);
-
-			results.push_back(hullShape);
-		}
-	}
-
-	return results;
 }
 
 void DropshotTiles::Init() {

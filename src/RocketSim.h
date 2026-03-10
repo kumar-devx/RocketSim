@@ -4,19 +4,15 @@
 #include "Sim/Arena/Arena.h"
 
 #include "Math/Math.h"
+#include "CollisionMeshFile/CollisionMeshFile.h"
 
 // AVAILABLE DEFS FOR ROCKETSIM:
 //	RS_MAX_SPEED: Define this to remove certain sanity checks for faster speed
 //	RS_DONT_LOG: Define this to disable all logging output
 //	RS_NO_NAMESPACE: Disable the RocketSim namespace encapsulating all RocketSim classes/structs
-//	RS_CUDA_ENABLED: Automatically defined when CUDA is enabled in CMake
 
-#ifdef RS_CUDA_ENABLED
 #include "Sim/Cuda/CudaEngine.h"
 #include "Sim/Cuda/ArenaBatch.h"
-#endif
-
-class btBvhTriangleMeshShape;
 
 namespace RocketSim {
 	enum class RocketSimStage : byte {
@@ -41,9 +37,8 @@ namespace RocketSim {
 
 	RocketSimStage GetStage();
 
-	std::vector<btBvhTriangleMeshShape*>& GetArenaCollisionShapes(GameMode gameMode);
+	const std::vector<CollisionMeshFile>& GetArenaCollisionMeshes(GameMode gameMode);
 
-#ifdef RS_CUDA_ENABLED
 	// CUDA acceleration interface
 	bool InitCuda();
 	bool IsCudaEnabled();
@@ -52,5 +47,4 @@ namespace RocketSim {
 	// Internal CUDA engine accessor (for use by Arena)
 	class CudaEngine;
 	CudaEngine* GetCudaEngine();
-#endif
 }

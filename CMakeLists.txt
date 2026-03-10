@@ -18,16 +18,9 @@ file(GLOB_RECURSE ROCKETSIM_SOURCES
     "src/Sim/Cuda/*.cuh"
 )
 
-file(GLOB_RECURSE BULLET_SOURCES
-    CONFIGURE_DEPENDS
-    "libsrc/bullet3-3.24/*.cpp"
-    "libsrc/bullet3-3.24/*.h"
-)
-
 # Create SHARED library (DLL) instead of STATIC
 add_library(RocketSim SHARED
     ${ROCKETSIM_SOURCES}
-    ${BULLET_SOURCES}
 )
 
 # Set properties
@@ -46,7 +39,6 @@ target_include_directories(RocketSim
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     PRIVATE
         ${CUDAToolkit_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/libsrc/bullet3-3.24/src
 )
 
 # CUDA compile options
@@ -103,7 +95,7 @@ endif()
 # Define RocketSim export macro
 target_compile_definitions(RocketSim PRIVATE
     RocketSim_EXPORTS
-    $<$<COMPILE_LANGUAGE:CUDA>:RS_CUDA_ENABLED>
+    RS_CUDA_ENABLED
 )
 
 # Generate compile_commands.json for better IDE support

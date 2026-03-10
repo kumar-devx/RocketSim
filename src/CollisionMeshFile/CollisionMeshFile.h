@@ -7,8 +7,6 @@
 #define COLLISION_MESH_BASE_PATH "./collision_meshes/"
 #define COLLISION_MESH_FILE_EXTENSION ".cmf"
 
-class btTriangleMesh;
-
 RS_NS_START
 
 // Collision mesh file structure based off of the one in https://github.com/ZealanL/RLArenaCollisionDumper
@@ -33,7 +31,6 @@ struct CollisionMeshFile {
 	uint32_t hash;
 
 	void ReadFromStream(DataStreamIn& in, bool silent = false, std::string filePath = "<NO FILE PATH>");
-	btTriangleMesh* MakeBulletMesh();
 	void UpdateHash();
 };
 

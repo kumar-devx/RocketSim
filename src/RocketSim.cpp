@@ -1,9 +1,5 @@
 #include "RocketSim.h"
 
-#include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h"
-#include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btTriangleMesh.h"
-#include "../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
-
 using namespace RocketSim;
 
 std::filesystem::path RocketSim::_collisionMeshesFolder = {};
@@ -47,9 +43,13 @@ RocketSimStage RocketSim::GetStage() {
 	return stage;
 }
 
-std::vector<btBvhTriangleMeshShape*>& RocketSim::GetArenaCollisionShapes(GameMode gameMode) {
-	static std::map<GameMode, std::vector<btBvhTriangleMeshShape*>> arenaCollisionMeshes;
-	return arenaCollisionMeshes[gameMode];
+static std::map<GameMode, std::vector<CollisionMeshFile>>& GetArenaCollisionMeshMap() {
+	static std::map<GameMode, std::vector<CollisionMeshFile>> arenaCollisionMeshFiles;
+	return arenaCollisionMeshFiles;
+}
+
+const std::vector<CollisionMeshFile>& RocketSim::GetArenaCollisionMeshes(GameMode gameMode) {
+	return GetArenaCollisionMeshMap()[gameMode];
 }
 
 void RocketSim::Init(std::filesystem::path collisionMeshesFolder, bool silent) {
@@ -63,8 +63,6 @@ void RocketSim::Init(std::filesystem::path collisionMeshesFolder, bool silent) {
 	};
 
 	for (GameMode gameMode : GAMEMODES_WITH_UNIQUE_MESHES) { // Load collision meshes for soccar and hoops
-		auto& meshes = GetArenaCollisionShapes(gameMode);
-
 		std::filesystem::path basePath = collisionMeshesFolder;
 		std::filesystem::path soccarMeshesFolder = basePath / GAMEMODE_STRS[(int)gameMode];
 
@@ -127,7 +125,8 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 				continue;
 			}
 
-			auto& meshes = GetArenaCollisionShapes(gameMode);
+			auto& meshStore = GetArenaCollisionMeshMap()[gameMode];
+			meshStore.clear();
 
 			MeshHashSet targetHashes = MeshHashSet(gameMode);
 
@@ -153,14 +152,7 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 						);
 				}
 				hashCount++;
-
-				btTriangleMesh* triMesh = meshFile.MakeBulletMesh();
-
-				auto bvtMesh = new btBvhTriangleMeshShape(triMesh, true);
-				btTriangleInfoMap* infoMap = new btTriangleInfoMap();
-				btGenerateInternalEdgeInfo(bvtMesh, infoMap);
-				bvtMesh->setTriangleInfoMap(infoMap);
-				meshes.push_back(bvtMesh);
+				meshStore.push_back(meshFile);
 
 				idx++;
 			}
@@ -168,9 +160,9 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 
 		if (!silent) {
 			RS_LOG(MSG_PREFIX << "Finished loading arena collision meshes:");
-			RS_LOG(" > Soccar: " << GetArenaCollisionShapes(GameMode::SOCCAR).size());
-			RS_LOG(" > Hoops: " << GetArenaCollisionShapes(GameMode::HOOPS).size());
-			RS_LOG(" > Dropshot: " << GetArenaCollisionShapes(GameMode::DROPSHOT).size());
+			RS_LOG(" > Soccar: " << GetArenaCollisionMeshes(GameMode::SOCCAR).size());
+			RS_LOG(" > Hoops: " << GetArenaCollisionMeshes(GameMode::HOOPS).size());
+			RS_LOG(" > Dropshot: " << GetArenaCollisionMeshes(GameMode::DROPSHOT).size());
 		}
 
 
@@ -181,7 +173,6 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 
 		stage = RocketSimStage::INITIALIZED;
 
-#ifdef RS_CUDA_ENABLED
 		// Initialize CUDA (MANDATORY in GPU-only mode)
 		if (!silent)
 			RS_LOG("Initializing CUDA acceleration (REQUIRED)...");
@@ -196,7 +187,6 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 
 		if (!silent)
 			RS_LOG("CUDA initialization successful - GPU-ONLY MODE active");
-#endif
 	}
 	_beginInitMutex.unlock();
 }
@@ -207,7 +197,6 @@ void RocketSim::AssertInitialized(const char* errorMsgPrefix) {
 	}
 }
 
-#ifdef RS_CUDA_ENABLED
 // Global CUDA engine instance.
 // Intentionally process-lifetime to avoid CUDA teardown order issues at exit.
 static CudaEngine* g_cudaEngine = nullptr;
@@ -232,4 +221,3 @@ bool RocketSim::TestCudaSetup() {
 CudaEngine* RocketSim::GetCudaEngine() {
 	return g_cudaEngine;
 }
-#endif

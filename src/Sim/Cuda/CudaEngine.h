@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef RS_CUDA_ENABLED
-
 #include "GpuTypes.h"
 #include "MemoryManager.h"
 #include "BallKernels.h"
@@ -10,6 +8,9 @@
 #include <vector>
 
 RS_NS_START
+
+// Forward declarations
+struct GpuArenaCollisionData;
 
 // Main CUDA engine for RocketSim
 class CudaEngine {
@@ -39,6 +40,15 @@ public:
         float deltaTime
     );
     
+    // Full GPU physics pipeline
+    void UpdateArenaBatchFullPhysics(
+        GpuBallState* ball,
+        GpuCarState* cars,
+        int numCars,
+        float deltaTime,
+        const GpuArenaCollisionData* arenaCollision = nullptr
+    );
+    
     // Synchronize GPU (wait for all operations to complete)
     void Synchronize();
 
@@ -57,5 +67,3 @@ private:
 };
 
 RS_NS_END
-
-#endif // RS_CUDA_ENABLED
