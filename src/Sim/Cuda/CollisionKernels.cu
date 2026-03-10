@@ -128,6 +128,62 @@ CUDA_KERNEL void BallCarCollisionKernel(
     }
 }
 
+// Batched arena-aware ball-car collision kernel.
+// One block per arena, threads iterate that arena's local car range.
+CUDA_KERNEL void BatchBallCarCollisionKernel(
+    GpuBallState* balls,
+    GpuCarState* cars,
+    int* carOffsets,
+    int numArenas,
+    int totalCars
+) {
+    int arenaIdx = blockIdx.x;
+    if (arenaIdx >= numArenas) return;
+
+    int carStart = carOffsets[arenaIdx];
+    int carEnd = (arenaIdx < numArenas - 1) ? carOffsets[arenaIdx + 1] : totalCars;
+
+    GpuBallState& ball = balls[arenaIdx];
+
+    for (int carIdx = carStart + threadIdx.x; carIdx < carEnd; carIdx += blockDim.x) {
+        GpuCarState& car = cars[carIdx];
+        if (car.isDemoed) continue;
+
+        GpuVec3 contactNormal;
+        float penetration;
+
+        if (SphereBoxCollision(
+            ball.pos, ball.radius,
+            car.pos, car.hitboxSize, car.rotMat,
+            contactNormal, penetration
+        )) {
+            // Calculate position correction
+            GpuVec3 posCorrection = contactNormal * penetration;
+
+            // Apply impulse (simplified)
+            GpuVec3 relVel = ball.vel - car.vel;
+            float velAlongNormal = relVel.dot(contactNormal);
+
+            if (velAlongNormal < 0) {
+                float restitution = GpuRLConst::CARBALL_COLLISION_RESTITUTION;
+                float j = -(1.0f + restitution) * velAlongNormal;
+                j /= (1.0f / ball.mass + 1.0f / car.mass);
+
+                GpuVec3 impulse = contactNormal * j;
+                GpuVec3 ballVelDelta = impulse * (1.0f / ball.mass);
+                GpuVec3 carVelDelta = impulse * (1.0f / car.mass);
+
+                // Multiple cars in same arena can touch same ball in same tick.
+                AtomicAddVec3(&ball.pos, posCorrection);
+                AtomicAddVec3(&ball.vel, ballVelDelta);
+
+                // One thread per car index in this kernel invocation.
+                car.vel = car.vel - carVelDelta;
+            }
+        }
+    }
+}
+
 // Simple ground detection for cars
 CUDA_KERNEL void CarGroundDetectionKernel(GpuCarState* cars, int numCars) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -195,6 +251,25 @@ void LaunchBallCarCollisionKernel(
     BallCarCollisionKernel<<<blocks, threads, 0, stream>>>(balls, cars, numBalls, threadsPerBlock);
     CUDA_CHECK(cudaGetLastError()); // Check for kernel launch errors
 }
+
+    void LaunchBatchBallCarCollisionKernel(
+        GpuBallState* balls,
+        GpuCarState* cars,
+        int* carOffsets,
+        int numArenas,
+        int totalCars,
+        cudaStream_t stream
+    ) {
+        if (!balls || !cars || !carOffsets || numArenas <= 0 || totalCars < 0) return;
+
+        const int threadsPerBlock = 256;
+        const int numBlocks = numArenas;
+
+        BatchBallCarCollisionKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
+            balls, cars, carOffsets, numArenas, totalCars
+        );
+        CUDA_CHECK(cudaGetLastError());
+    }
 
 void LaunchCarGroundDetectionKernel(GpuCarState* cars, int numCars, cudaStream_t stream) {
     if (!cars || numCars <= 0) return;

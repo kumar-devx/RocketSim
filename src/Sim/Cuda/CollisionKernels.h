@@ -20,6 +20,17 @@ void LaunchBallCarCollisionKernel(
     cudaStream_t stream = 0
 );
 
+// Batched arena-aware ball-car collision kernel.
+// Uses carOffsets so each ball only collides with cars from its own arena.
+void LaunchBatchBallCarCollisionKernel(
+    GpuBallState* balls,
+    GpuCarState* cars,
+    int* carOffsets,
+    int numArenas,
+    int totalCars,
+    cudaStream_t stream = 0
+);
+
 // Ground detection for cars (simple height check)
 void LaunchCarGroundDetectionKernel(GpuCarState* cars, int numCars, cudaStream_t stream = 0);
 

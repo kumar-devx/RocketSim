@@ -163,65 +163,51 @@ void ArenaBatch::StepAll(int ticksToSimulate) {
 
     int numArenas = static_cast<int>(arenas_.size());
     if (numArenas == 0) return;
+    if (ticksToSimulate <= 0) return;
 
     // Allocate GPU buffers if needed
     AllocateGPUBuffers();
 
-    for (int tick = 0; tick < ticksToSimulate; tick++) {
-        int totalCars = 0;
-        for (Arena* arena : arenas_) {
-            totalCars += static_cast<int>(arena->GetCars().size());
-        }
+    int totalCars = 0;
+    for (Arena* arena : arenas_) {
+        totalCars += static_cast<int>(arena->GetCars().size());
+    }
 
-        // Sync all arenas to GPU
-        SyncToGPU();
-        
-        float deltaTime = arenas_[0]->tickTime;
-        cudaStream_t stream = cudaEngine->GetStream();
-        
+    // Sync all arenas to GPU once, then run N ticks fully on GPU.
+    SyncToGPU();
+
+    float deltaTime = arenas_[0]->tickTime;
+    cudaStream_t stream = cudaEngine->GetStream();
+
+    for (int tick = 0; tick < ticksToSimulate; tick++) {
+
         // OPTIMIZED: Use individual parallelized kernels instead of batch kernel
         // This processes all balls and all cars in parallel across GPU cores
-        
+
         // Update all balls in parallel (one thread per ball)
         LaunchBallPhysicsKernel(gpuBalls_.get(), numArenas, deltaTime, stream);
-        
+
         // Update all cars in parallel (one thread per car)
         if (totalCars > 0) {
             LaunchCarPhysicsKernel(gpuCars_.get(), totalCars, deltaTime, stream);
             LaunchCarGroundDetectionKernel(gpuCars_.get(), totalCars, stream);
         }
-        
+
         // Collision detection: all balls with floor
         LaunchBallFloorCollisionKernel(gpuBalls_.get(), numArenas, stream);
-        
-        // Ball-car collisions within each arena
-        // Process each arena's ball with its cars
-        for (int i = 0; i < numArenas; i++) {
-            int carStart = carOffsets_.get()[i];
-            int carEnd = (i < numArenas - 1) ? carOffsets_.get()[i + 1] : totalCars;
-            int arenaCars = carEnd - carStart;
-            
-            if (arenaCars > 0) {
-                LaunchBallCarCollisionKernel(
-                    &gpuBalls_.get()[i],
-                    &gpuCars_.get()[carStart],
-                    1,
-                    arenaCars,
-                    stream
-                );
-            }
-        }
-        
-        // Wait for GPU
-        cudaEngine->Synchronize();
-        
-        // Sync results back to CPU
-        SyncFromGPU();
-        
-        // Update tick counts
-        for (Arena* arena : arenas_) {
-            arena->tickCount++;
-        }
+
+        // Ball-car collisions in one arena-aware launch per tick.
+        if (totalCars > 0)
+            LaunchBatchBallCarCollisionKernel(gpuBalls_.get(), gpuCars_.get(), carOffsets_.get(), numArenas, totalCars, stream);
+    }
+
+    // Wait for GPU work and sync final states once.
+    cudaEngine->Synchronize();
+    SyncFromGPU();
+
+    // Update tick counts in bulk.
+    for (Arena* arena : arenas_) {
+        arena->tickCount += ticksToSimulate;
     }
 }
 
