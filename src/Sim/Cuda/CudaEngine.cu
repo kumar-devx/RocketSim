@@ -80,9 +80,11 @@ bool CudaEngine::Initialize() {
     if (err != cudaSuccess) {
         std::cerr << "FATAL: Failed to allocate GPU memory: " << cudaGetErrorString(err) << std::endl;
         std::cerr << "GPU is present but cannot allocate memory!" << std::endl;
-        if (stream_) {
-            cudaStreamDestroy(stream_);
-            stream_ = nullptr;
+        for (int i = 0; i < NUM_STREAMS; i++) {
+            if (streams_[i]) {
+                cudaStreamDestroy(streams_[i]);
+                streams_[i] = nullptr;
+            }
         }
         enabled_ = false;
         return false;
@@ -112,26 +114,27 @@ void CudaEngine::UpdateArena(
 ) {
     if (!enabled_) return;
     MakeContextCurrent();
+    cudaStream_t stream = streams_[0];
     
     // Update ball physics
     if (ball) {
-        LaunchBallPhysicsKernel(ball, 1, deltaTime, stream_);
+        LaunchBallPhysicsKernel(ball, 1, deltaTime, stream);
     }
     
     // Update car physics (includes boost, jump, air control)
     if (cars && numCars > 0) {
-        LaunchCarPhysicsKernel(cars, numCars, deltaTime, stream_);
+        LaunchCarPhysicsKernel(cars, numCars, deltaTime, stream);
         
         // Update ground detection
-        LaunchCarGroundDetectionKernel(cars, numCars, stream_);
+        LaunchCarGroundDetectionKernel(cars, numCars, stream);
     }
     
     // Collision detection
     if (ball) {
-        LaunchBallFloorCollisionKernel(ball, 1, stream_);
+        LaunchBallFloorCollisionKernel(ball, 1, stream);
         
         if (cars && numCars > 0) {
-            LaunchBallCarCollisionKernel(ball, cars, 1, numCars, stream_);
+            LaunchBallCarCollisionKernel(ball, cars, 1, numCars, stream);
         }
     }
 }
@@ -145,9 +148,10 @@ void CudaEngine::UpdateArenaBatch(
 ) {
     if (!enabled_) return;
     MakeContextCurrent();
+    cudaStream_t stream = streams_[0];
     
     // Update all balls in parallel
-    LaunchBallPhysicsKernel(balls, numArenas, deltaTime, stream_);
+    LaunchBallPhysicsKernel(balls, numArenas, deltaTime, stream);
     
     // Calculate total number of cars across all arenas
     int totalCars = 0;
@@ -157,12 +161,12 @@ void CudaEngine::UpdateArenaBatch(
     
     if (totalCars > 0) {
         // Update all cars in parallel
-        LaunchCarPhysicsKernel(cars, totalCars, deltaTime, stream_);
-        LaunchCarGroundDetectionKernel(cars, totalCars, stream_);
+        LaunchCarPhysicsKernel(cars, totalCars, deltaTime, stream);
+        LaunchCarGroundDetectionKernel(cars, totalCars, stream);
     }
     
     // Collision detection
-    LaunchBallFloorCollisionKernel(balls, numArenas, stream_);
+    LaunchBallFloorCollisionKernel(balls, numArenas, stream);
     
     // Ball-car collisions (more complex in batch mode)
     // For now, skip in batch mode - will implement spatial hashing later
@@ -232,6 +236,7 @@ void CudaEngine::UpdateArenaMultiTick(
 ) {
     if (!enabled_) return;
     MakeContextCurrent();
+    cudaStream_t activeStream = stream ? stream : streams_[0];
 
     for (int t = 0; t < numTicks; t++) {
         // Write this tick's controls into car state (one thread per car, no sync needed).
@@ -239,7 +244,7 @@ void CudaEngine::UpdateArenaMultiTick(
             LaunchApplyControlsKernel(
                 cars, numCars,
                 d_actionsAllTicks + static_cast<ptrdiff_t>(t) * numCars,
-                stream
+                activeStream
             );
         }
 
@@ -252,7 +257,7 @@ void CudaEngine::UpdateArenaMultiTick(
             deltaTime,
             nullptr,
             arenaCollision,
-            stream
+            activeStream
         );
         CUDA_CHECK(cudaGetLastError());
     }

@@ -10,6 +10,7 @@
 #include "../MutatorConfig/MutatorConfig.h"
 #include "ArenaConfig/ArenaConfig.h"
 #include "DropshotTiles/DropshotTiles.h"
+#include "../Cuda/CudaCompat.h"
 
 RS_NS_START
 
